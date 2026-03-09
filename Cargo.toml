@@ -1,0 +1,12 @@
+[package]
+name = "nota-bene"
+version = "0.1.0"
+edition = "2021"
+description = "Notebook testing with fixtures, patches, and AI-generated tests"
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rmcp = { version = "1", features = ["server", "macros", "schemars", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
