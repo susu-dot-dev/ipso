@@ -8,6 +8,13 @@ E2E_TIMEOUT="${E2E_TIMEOUT:-120}"
 OUTPUT_FILE="$(mktemp)"
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$REPO_ROOT/.env"
+  set +a
+fi
+
 cd "$SAMPLE_PROJECT"
 
 if ! command -v opencode &>/dev/null; then

@@ -29,20 +29,22 @@ impl NotaBeneMcp {
     }
 
     #[tool(description = "Greet someone by name")]
-    async fn greet(&self, Parameters(params): Parameters<GreetParams>) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::text(format!("Hello, {}", params.name))]))
+    async fn greet(
+        &self,
+        Parameters(params): Parameters<GreetParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Hello, {}",
+            params.name
+        ))]))
     }
 }
 
 #[tool_handler]
 impl ServerHandler for NotaBeneMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
-            ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
-        )
-        .with_protocol_version(ProtocolVersion::V_2025_06_18)
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_06_18)
     }
 }
 
