@@ -1,3 +1,5 @@
+Important: This document contains the original inspiration for nota-bene. It has been superceeded by the other documents in the codebase. Where there are discrepancies in the implementation, the content in this file should be considered incorrect. This file will likely get deleted at some point.
+
 # Problem
 How do you test a notebook?
 
