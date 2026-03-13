@@ -34,6 +34,10 @@ quote-style = "preserve"
 [tool.mypy]
 strict = true
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
 [tool.pytest.ini_options]
 addopts = "--cov --cov-report=xml --cov-report=html --cov-config=.coveragerc"
 

@@ -6,6 +6,8 @@ Each cell can have one test. The test is plain Python source code that calls `no
 
 Before the cell source runs, the runner applies the cell's diff (if present) to patch the source — replacing hardcoded values like file paths with fixture-provided variables. The test code always executes the patched version.
 
+Tests are **unit-style**: they assert on Python state left in the kernel namespace after the cell runs (variables, dataframes, computed values). stdout, stderr, and rich outputs (plots, display objects) are out of scope.
+
 ## User Scenario
 
 A developer has a 3-cell pandas notebook. The AI has generated fixtures and tests for each cell.
@@ -16,7 +18,6 @@ The test calls `execute_cell()` once and asserts on the result:
 
 ```python
 nota_bene.execute_cell()
-assert nota_bene.cell_success, "cell failed to execute"
 assert isinstance(df, pd.DataFrame), "expected df to be a DataFrame"
 assert len(df) > 0, f"expected rows, got {len(df)}"
 ```
@@ -47,7 +48,6 @@ for case in test_cases:
     nota_bene.execute_cell()
 
     with nota_bene.subtest(f"price={case['price']} quantity={case['quantity']}"):
-        assert nota_bene.cell_success, "cell failed to execute"
         assert (df["total"] == case["expected_total"]).all(), (
             f"expected total {case['expected_total']}, got {df['total'].iloc[0]}"
         )
@@ -74,7 +74,6 @@ A test is stored in a cell's `nota-bene` metadata under the `test` key, alongsid
       "name": "validates price calculation",
       "source": [
         "nota_bene.execute_cell()\n",
-        "assert nota_bene.cell_success, 'cell failed to execute'\n",
         "assert isinstance(df, pd.DataFrame)\n"
       ]
     }
@@ -123,7 +122,6 @@ Call `execute_cell()` once, assert on results. Use descriptive assert messages s
 
 ```python
 nota_bene.execute_cell()
-assert nota_bene.cell_success, "cell failed to execute"
 assert "total" in df.columns, "expected 'total' column to be added"
 assert (df["total"] == df["price"] * df["quantity"]).all(), "total column values are incorrect"
 ```
@@ -158,28 +156,23 @@ If the test code never calls `nota_bene.subtest()`, the runner wraps the entire 
 
 ### Properties _(read-only state)_
 
-Set by `nota_bene.execute_cell()`. Available after the call returns.
-
-- **`nota_bene.cell_result`**: The return value of the cell execution, if any.
-- **`nota_bene.cell_success`**: `True` if the cell executed without raising an exception.
-- **`nota_bene.cell_stdout`**: Captured stdout from the cell execution.
-- **`nota_bene.cell_stderr`**: Captured stderr from the cell execution.
-- **`nota_bene.cell_outputs`**: List of rich outputs (e.g. display objects, plots) produced by the cell.
-- **`nota_bene.test_results`**: List of subtest result dicts accumulated during the test. See [Results Format](#results-format).
+- **`nota_bene.test_results`** is not part of the public API. Test authors do not need to read it — results are accumulated internally by `subtest()` and retrieved by the runner via `nota_bene._runner.get_test_results()`.
 
 ### Methods _(actions)_
 
-- **`nota_bene.execute_cell()`**: Runs the patched cell source in the kernel. Sets all `cell_*` properties. Can be called multiple times within a test — each call re-executes the cell and overwrites the `cell_*` properties.
+- **`nota_bene.execute_cell()`**: Runs the patched cell source in the kernel's global namespace. Raises if the cell raises. Can be called multiple times within a test — each call re-executes the cell.
 - **`nota_bene.register_teardown(callback)`**: Registers a cleanup callback onto the teardown stack. Called from fixture source, not typically from test code.
 - **`nota_bene.subtest(name)`**: Context manager. Records a named subtest result. Catches exceptions and marks the subtest as failed without halting the rest of the test.
 
-### Internal _(called by runner, not test code)_
+### Runner-facing _(called by the runner, not test code)_
 
-- **`nota_bene._run_teardowns()`**: Drains the teardown stack in LIFO order. Called by the runner after the test completes.
+- **`nota_bene._runner.load_cell(source)`**: Injects the already-patched cell source string into the kernel so `execute_cell()` knows what to run.
+- **`nota_bene._runner.get_test_results()`**: Returns accumulated subtest results as a JSON string. Called by the runner after the test source finishes.
+- **`nota_bene._runner.run_teardowns()`**: Drains the teardown stack in LIFO order. Called by the runner after the test completes.
 
 ## Results Format
 
-After the test source finishes executing, the runner reads `nota_bene.test_results`. This is a list of dicts, one per subtest:
+After the test source finishes executing, the runner calls `nota_bene._runner.get_test_results()` which returns a JSON string. Deserialized, it is a list of dicts, one per subtest:
 
 ```python
 [
@@ -235,10 +228,9 @@ Required. Array of strings. Each string is a line of Python source ending with `
 
 ### `execute_cell()` behavior
 
-1. Join the cell's `source` array with `""` to produce the original source string
-2. If `nota-bene.diff` is present, apply the diff string as a unified patch to the original source using strict unified diff matching. If the patch fails to apply, raise an error — do not execute.
-3. Execute the patched (or original) source in the kernel
-4. Set `nota_bene.cell_result`, `nota_bene.cell_success`, `nota_bene.cell_stdout`, `nota_bene.cell_stderr`, `nota_bene.cell_outputs` from the execution result
+1. Read the already-patched source string previously loaded by `_runner.load_cell()`. If none was loaded, raise an error.
+2. Execute the source in the kernel's global namespace via `exec()`.
+3. If the cell raises an exception, it propagates to the caller.
 
 ### `subtest(name)` behavior
 
