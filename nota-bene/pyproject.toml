@@ -1,0 +1,44 @@
+[project]
+name = "nota-bene"
+version = "0.1.0"
+description = "Notebook testing with fixtures, patches, and AI-generated tests"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-exclude = ["tests/**"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-cov>=4.1.0"]
+lint = ["ruff>=0.12.9", "mypy>=1.0.0"]
+
+[tool.uv]
+default-groups = ["dev", "lint"]
+
+[tool.ruff]
+exclude = [".venv"]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["E741"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+addopts = "--cov --cov-report=xml --cov-report=html --cov-config=.coveragerc"
+
+[tool.coverage.run]
+source_pkgs = ["nota_bene", "tests"]
+branch = true
+parallel = true
+omit = ["nota_bene/__about__.py"]
