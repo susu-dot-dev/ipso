@@ -260,5 +260,5 @@ For each cell in notebook order (1 through N):
 
 For cell N only:
 5. Execute assertions
-6. Trigger teardown by sending `nota_bene._run_teardowns()` as an `execute_request`
+6. Trigger teardown by sending `nota_bene._runner.run_teardowns()` as an `execute_request`
 7. Shut down the kernel

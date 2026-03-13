@@ -159,11 +159,12 @@ For each cell test, `execute_cell_test()` performs the following steps inside th
    a. Run that cell's fixtures (sorted by priority)
    b. Run that cell's patched source (or unpatched if no diff)
 4. Run current cell's fixtures (sorted by priority)
-5. Run the test source
-6. Read nota_bene.test_results from the kernel
-7. Send nota_bene._run_teardowns()
-8. Shut down the kernel
-9. Return the results list
+5. Call nota_bene._runner.load_cell(patched_source) to inject the target cell's source
+6. Run the test source
+7. Call nota_bene._runner.get_test_results() to retrieve results as JSON
+8. Send nota_bene._runner.run_teardowns()
+9. Shut down the kernel
+10. Return the results list
 ```
 
 If the test source raises an uncaught exception (i.e. no `subtest()` calls caught it), the runner constructs an implicit single result using the test name and the exception details.
@@ -191,18 +192,20 @@ def execute_cell_test(notebook_path, cell_id, test_source):
             run_cell_fixtures(kc, cell)
             run_cell_source(kc, cell)
 
-        # current cell: fixtures only (source is run by the test)
+        # current cell: fixtures only, then load patched source for execute_cell()
         run_cell_fixtures(kc, cells[target_idx])
+        patched_source = get_patched_source(cells[target_idx])
+        execute(kc, f"nota_bene._runner.load_cell({json.dumps(patched_source)})")
 
         # run test source
         execute(kc, test_source)
 
         # collect results
-        results_json = execute_and_capture(kc, "import json; json.dumps(nota_bene.test_results)")
+        results_json = execute_and_capture(kc, "nota_bene._runner.get_test_results()")
         results = json.loads(results_json)
 
         # teardown
-        execute(kc, "nota_bene._run_teardowns()")
+        execute(kc, "nota_bene._runner.run_teardowns()")
 
         return results
 
