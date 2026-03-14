@@ -849,3 +849,271 @@ fn edit_continue_does_not_stamp_shas_on_plain_cells() {
         "plain-data should have no nota-bene metadata after --continue, got: {meta}"
     );
 }
+
+// ===========================================================================
+// nb view tests
+// ===========================================================================
+
+/// Run `nota-bene view <args>` and return (stdout, stderr, exit status).
+fn run_view(source_path: &Path, extra_args: &[&str]) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("view").arg(source_path);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene view");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+#[test]
+fn view_all_cells_returns_json_array() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) = run_view(&source_path, &[]);
+    assert!(status.success(), "exit status should be 0");
+    let arr: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(arr.is_array(), "output should be a JSON array");
+}
+
+#[test]
+fn view_all_cells_excludes_markdown_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &[]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // No cell should have id "md-intro" (markdown cell)
+    for cell in &arr {
+        assert_ne!(
+            cell["cell_id"].as_str(),
+            Some("md-intro"),
+            "markdown cells must be excluded"
+        );
+    }
+}
+
+#[test]
+fn view_all_cells_count() {
+    // simple.ipynb has 4 code cells and 1 markdown cell → 4 in output
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &[]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 4, "expected 4 code cells");
+}
+
+#[test]
+fn view_cell_object_has_required_fields() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &[]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert!(cell.get("cell_id").is_some(), "cell_id missing");
+        assert!(cell.get("source").is_some(), "source missing");
+        assert!(cell.get("status").is_some(), "status missing");
+    }
+}
+
+#[test]
+fn view_filter_by_cell_id() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    assert!(status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["cell_id"].as_str(), Some("compute-total"));
+}
+
+#[test]
+fn view_filter_by_cell_id_or() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(
+        &source_path,
+        &["--filter", "cell:compute-total,reviewed-pass"],
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 2);
+}
+
+#[test]
+fn view_filter_by_index_exact() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // Index is 0-based across *all* cells (including markdown).
+    // Cell at index 0 is "md-intro" (markdown, excluded from output).
+    // Index 1 is "plain-data" (first code cell).
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "index:1"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["cell_id"].as_str(), Some("plain-data"));
+}
+
+#[test]
+fn view_filter_by_index_range() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // Indices 1..2 — plain-data and compute-total
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "index:1..2"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 2);
+}
+
+#[test]
+fn view_filter_test_null() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // plain-data, reviewed-pass, and the empty cell have no test
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "test:null"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert_ne!(
+            cell["cell_id"].as_str(),
+            Some("compute-total"),
+            "compute-total has a test and should be filtered out"
+        );
+    }
+}
+
+#[test]
+fn view_filter_test_not_null() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "test:not null"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["cell_id"].as_str(), Some("compute-total"));
+}
+
+#[test]
+fn view_and_filters() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // compute-total has a test AND fixtures; reviewed-pass has no test
+    let (stdout, _stderr, _) = run_view(
+        &source_path,
+        &["--filter", "test:not null", "--filter", "fixtures:not null"],
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["cell_id"].as_str(), Some("compute-total"));
+}
+
+#[test]
+fn view_fields_projection() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &["--fields", "cell_id,source"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert!(cell.get("cell_id").is_some());
+        assert!(cell.get("source").is_some());
+        assert!(
+            cell.get("status").is_none(),
+            "status should be projected out"
+        );
+        assert!(
+            cell.get("fixtures").is_none(),
+            "fixtures should be projected out"
+        );
+    }
+}
+
+#[test]
+fn view_cell_id_always_present_even_when_not_in_fields() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &["--fields", "source"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert!(
+            cell.get("cell_id").is_some(),
+            "cell_id must always be present"
+        );
+    }
+}
+
+#[test]
+fn view_compute_total_has_fixtures_and_test() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    let cell = &arr[0];
+    // fixtures present
+    assert!(
+        cell["fixtures"].is_object(),
+        "compute-total should have fixtures"
+    );
+    // test present
+    assert!(cell["test"].is_object(), "compute-total should have a test");
+    // shas NOT exposed
+    assert!(cell.get("shas").is_none(), "shas must not appear in output");
+}
+
+#[test]
+fn view_status_field_structure() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    let status = &arr[0]["status"];
+    assert!(status.get("valid").is_some(), "status.valid missing");
+    assert!(
+        status.get("diagnostics").is_some(),
+        "status.diagnostics missing"
+    );
+    assert!(
+        status["diagnostics"].is_array(),
+        "diagnostics must be array"
+    );
+}
+
+#[test]
+fn view_stdin_mode() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let content = fs::read_to_string(&source_path).expect("read fixture");
+    // Run with --stdin, piping notebook content
+    let out = std::process::Command::new(common::binary())
+        .args(["view", source_path.to_str().unwrap(), "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    use std::io::Write;
+    let mut child = out;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 4, "stdin mode should return same 4 code cells");
+}
+
+#[test]
+fn view_no_filters_returns_empty_array_for_no_code_cells() {
+    // Build a notebook with only a markdown cell and verify output is []
+    let dir = TempDir::new().expect("create tempdir");
+    let nb_path = dir.path().join("md_only.ipynb");
+    let nb_json = serde_json::json!({
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "id": "md-only",
+                "metadata": {},
+                "source": ["# Hello"]
+            }
+        ],
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python"}
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5
+    });
+    fs::write(&nb_path, nb_json.to_string()).expect("write notebook");
+    let (stdout, _stderr, status) = run_view(&nb_path, &[]);
+    assert!(status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 0);
+}

@@ -90,6 +90,20 @@ impl CellExt for Cell {
 // load_notebook / save_notebook
 // ---------------------------------------------------------------------------
 
+/// Parse a notebook from an already-loaded string.  Used for `--stdin` mode.
+pub fn load_notebook_from_str(content: &str, path_hint: &str) -> Result<Notebook> {
+    let versioned = nbformat::parse_notebook(content)
+        .with_context(|| format!("parsing notebook {path_hint}"))?;
+    let nb = match versioned {
+        nbformat::Notebook::V4(nb) => nb,
+        nbformat::Notebook::Legacy(nb) => nbformat::upgrade_legacy_notebook(nb)
+            .with_context(|| format!("upgrading legacy notebook {path_hint}"))?,
+        nbformat::Notebook::V3(nb) => nbformat::upgrade_v3_notebook(nb)
+            .with_context(|| format!("upgrading v3 notebook {path_hint}"))?,
+    };
+    Ok(nb)
+}
+
 pub fn load_notebook(path: &Path) -> Result<Notebook> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("reading notebook {}", path.display()))?;
