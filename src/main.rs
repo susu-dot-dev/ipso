@@ -1,3 +1,4 @@
+mod diagnostics;
 mod diff_utils;
 mod edit;
 mod mcp;

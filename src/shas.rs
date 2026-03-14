@@ -3,7 +3,7 @@ use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 
-use crate::metadata::{NotaBeneMeta, ShaEntry};
+use crate::metadata::{NotaBeneData, ShaEntry};
 use crate::notebook::CellExt;
 
 // ---------------------------------------------------------------------------
@@ -52,11 +52,10 @@ pub enum Staleness {
 /// `cell_index` is the 0-based index of the cell in `nb.cells`.
 pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
     let cell = &nb.cells[cell_index];
-    let nb_meta = cell.nota_bene();
 
-    let data = match nb_meta {
-        NotaBeneMeta::Absent => return Staleness::Valid, // no metadata → not our concern
-        NotaBeneMeta::Present(ref d) => d.clone(),
+    let data: NotaBeneData = match cell.nota_bene() {
+        None => return Staleness::Valid, // no metadata → not our concern
+        Some(d) => d,
     };
 
     let stored_shas = match &data.shas {
@@ -148,6 +147,21 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
         Staleness::Valid
     } else {
         Staleness::OutOfDate(reasons)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// accept_cell
+// ---------------------------------------------------------------------------
+
+/// Recompute and store the SHA snapshot for a single cell at `cell_index`.
+/// Only stamps the cell if it has nota-bene metadata.
+pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
+    let snapshot = compute_snapshot(nb);
+    let cell = &mut nb.cells[cell_index];
+    if cell.nota_bene().is_some() {
+        let shas_slice = snapshot[..=cell_index].to_vec();
+        cell.nota_bene_mut().set_shas(shas_slice);
     }
 }
 
@@ -385,5 +399,36 @@ mod tests {
         let nb = notebook(vec![c1, c_after]);
         // c-after is after c1, so it shouldn't affect staleness of c1.
         assert_eq!(staleness(&nb, 0), Staleness::Valid);
+    }
+
+    // --- accept_cell ---
+
+    #[test]
+    fn accept_cell_stamps_nb_cell() {
+        let c1 = plain_cell("c1", "x = 1");
+        let c2 = cell_with_nb_no_shas("c2", "y = 2");
+        let mut nb = notebook(vec![c1, c2]);
+        accept_cell(&mut nb, 1);
+        let data = nb.cells[1].nota_bene().expect("c2 should have nota-bene");
+        let shas = data.shas.expect("shas should be set");
+        assert_eq!(shas.len(), 2); // snapshot up to and including c2
+        assert_eq!(shas[1].cell_id, "c2");
+    }
+
+    #[test]
+    fn accept_cell_skips_cell_without_nb_metadata() {
+        let c1 = plain_cell("c1", "x = 1"); // no nota-bene
+        let mut nb = notebook(vec![c1]);
+        accept_cell(&mut nb, 0);
+        assert!(nb.cells[0].nota_bene().is_none());
+    }
+
+    #[test]
+    fn accept_cell_produces_valid_staleness() {
+        let c1 = plain_cell("c1", "x = 1");
+        let c2 = cell_with_nb_no_shas("c2", "y = 2");
+        let mut nb = notebook(vec![c1, c2]);
+        accept_cell(&mut nb, 1);
+        assert_eq!(staleness(&nb, 1), Staleness::Valid);
     }
 }

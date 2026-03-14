@@ -34,26 +34,14 @@ pub struct TestMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotaBeneData {
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "nullable_fixtures"
-    )]
-    pub fixtures: Option<Option<IndexMap<String, Fixture>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixtures: Option<IndexMap<String, Fixture>>,
 
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "nullable_str"
-    )]
-    pub diff: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
 
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "nullable_test"
-    )]
-    pub test: Option<Option<TestMeta>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<TestMeta>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shas: Option<Vec<ShaEntry>>,
@@ -61,25 +49,6 @@ pub struct NotaBeneData {
     /// Catches unknown sub-keys (e.g. "editor") so they survive round-trips.
     #[serde(flatten)]
     pub extra: IndexMap<String, Value>,
-}
-
-// ---------------------------------------------------------------------------
-// NotaBeneMeta  (top-level enum)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum NotaBeneMeta {
-    Absent,
-    Present(Box<NotaBeneData>),
-}
-
-impl NotaBeneMeta {
-    pub fn as_present(&self) -> Option<&NotaBeneData> {
-        match self {
-            NotaBeneMeta::Present(d) => Some(d),
-            NotaBeneMeta::Absent => None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -123,45 +92,46 @@ impl<'a> NotaBeneView<'a> {
 
     // ---- fixtures ----------------------------------------------------------
 
+    /// `Some(map)` writes the fixtures object; `None` removes the fixtures key.
     pub fn set_fixtures(&mut self, v: Option<IndexMap<String, Fixture>>) {
-        let json = match v {
-            Some(map) => serde_json::to_value(&map)
-                .expect("IndexMap<String, Fixture> is always serializable"),
-            None => Value::Null,
-        };
-        self.set_field("fixtures", json);
-    }
-
-    pub fn clear_fixtures(&mut self) {
-        self.remove_field("fixtures");
+        match v {
+            Some(map) => {
+                let json = serde_json::to_value(&map)
+                    .expect("IndexMap<String, Fixture> is always serializable");
+                self.set_field("fixtures", json);
+            }
+            None => self.remove_field("fixtures"),
+        }
     }
 
     // ---- diff --------------------------------------------------------------
 
+    /// `Some(s)` writes the diff string; `None` removes the diff key.
     pub fn set_diff(&mut self, v: Option<String>) {
-        let json = match v {
-            Some(s) => Value::String(s),
-            None => Value::Null,
-        };
-        self.set_field("diff", json);
-    }
-
-    pub fn clear_diff(&mut self) {
-        self.remove_field("diff");
+        match v {
+            Some(s) => self.set_field("diff", Value::String(s)),
+            None => self.remove_field("diff"),
+        }
     }
 
     // ---- test --------------------------------------------------------------
 
+    /// `Some(t)` writes the test object; `None` removes the test key.
     pub fn set_test(&mut self, v: Option<TestMeta>) {
-        let json = match v {
-            Some(t) => serde_json::to_value(&t).expect("TestMeta is always serializable"),
-            None => Value::Null,
-        };
-        self.set_field("test", json);
+        match v {
+            Some(t) => {
+                let json = serde_json::to_value(&t).expect("TestMeta is always serializable");
+                self.set_field("test", json);
+            }
+            None => self.remove_field("test"),
+        }
     }
 
-    pub fn clear_test(&mut self) {
-        self.remove_field("test");
+    // ---- shas --------------------------------------------------------------
+
+    pub fn set_shas(&mut self, shas: Vec<ShaEntry>) {
+        let json = serde_json::to_value(&shas).expect("Vec<ShaEntry> is always serializable");
+        self.set_field("shas", json);
     }
 
     /// Remove the entire "nota-bene" key from the cell metadata.
@@ -174,12 +144,12 @@ impl<'a> NotaBeneView<'a> {
 // Read nota-bene meta from raw additional map
 // ---------------------------------------------------------------------------
 
-pub fn read_nota_bene(additional: &HashMap<String, Value>) -> NotaBeneMeta {
+pub fn read_nota_bene(additional: &HashMap<String, Value>) -> Option<NotaBeneData> {
     match additional.get("nota-bene") {
-        None => NotaBeneMeta::Absent,
+        None => None,
         Some(v) => {
             let data: NotaBeneData = serde_json::from_value(v.clone()).unwrap_or_default();
-            NotaBeneMeta::Present(Box::new(data))
+            Some(data)
         }
     }
 }
@@ -187,70 +157,6 @@ pub fn read_nota_bene(additional: &HashMap<String, Value>) -> NotaBeneMeta {
 // ---------------------------------------------------------------------------
 // Serde helpers
 // ---------------------------------------------------------------------------
-
-macro_rules! nullable_module {
-    ($name:ident, $inner:ty) => {
-        mod $name {
-            use super::*;
-            use serde::{Deserializer, Serializer};
-
-            pub fn serialize<S>(
-                value: &Option<Option<$inner>>,
-                serializer: S,
-            ) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                use serde::Serialize as _;
-                match value {
-                    None => unreachable!("skip_serializing_if should prevent this"),
-                    Some(None) => serializer.serialize_none(),
-                    Some(Some(v)) => v.serialize(serializer),
-                }
-            }
-
-            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Option<$inner>>, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let opt: Option<$inner> = Option::deserialize(deserializer)?;
-                Ok(Some(opt))
-            }
-        }
-    };
-}
-
-nullable_module!(nullable_str, String);
-nullable_module!(nullable_test, TestMeta);
-
-mod nullable_fixtures {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(
-        value: &Option<Option<IndexMap<String, Fixture>>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            None => unreachable!("skip_serializing_if should prevent this"),
-            Some(None) => serializer.serialize_none(),
-            Some(Some(v)) => v.serialize(serializer),
-        }
-    }
-
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Option<Option<IndexMap<String, Fixture>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt: Option<IndexMap<String, Fixture>> = Option::deserialize(deserializer)?;
-        Ok(Some(opt))
-    }
-}
 
 mod source_lines {
     use serde::{Deserializer, Serialize as _, Serializer};
@@ -308,44 +214,24 @@ mod tests {
     // --- read_nota_bene ---
 
     #[test]
-    fn read_absent_key_returns_absent() {
-        assert!(matches!(
-            read_nota_bene(&HashMap::new()),
-            NotaBeneMeta::Absent
-        ));
+    fn read_absent_key_returns_none() {
+        assert!(read_nota_bene(&HashMap::new()).is_none());
     }
 
     #[test]
-    fn read_present_key_returns_present() {
+    fn read_present_key_returns_some() {
         let add = make_additional(json!({"diff": "some diff"}));
-        assert!(matches!(read_nota_bene(&add), NotaBeneMeta::Present(_)));
+        assert!(read_nota_bene(&add).is_some());
     }
 
     #[test]
-    fn read_malformed_value_returns_present_default() {
+    fn read_malformed_value_returns_some_default() {
         // A non-object value silently falls back to Default.
         let add = make_additional(json!(42));
-        match read_nota_bene(&add) {
-            NotaBeneMeta::Present(data) => {
-                assert!(data.diff.is_none());
-                assert!(data.fixtures.is_none());
-                assert!(data.test.is_none());
-            }
-            _ => panic!("expected Present"),
-        }
-    }
-
-    #[test]
-    fn as_present_returns_data_for_present() {
-        let add = make_additional(json!({}));
-        let meta = read_nota_bene(&add);
-        assert!(meta.as_present().is_some());
-    }
-
-    #[test]
-    fn as_present_returns_none_for_absent() {
-        let meta = read_nota_bene(&HashMap::new());
-        assert!(meta.as_present().is_none());
+        let data = read_nota_bene(&add).expect("expected Some");
+        assert!(data.diff.is_none());
+        assert!(data.fixtures.is_none());
+        assert!(data.test.is_none());
     }
 
     // --- source_lines serde (tested through Fixture / TestMeta) ---
@@ -381,42 +267,39 @@ mod tests {
         assert_eq!(t.source, "assert True\nassert 1==1");
     }
 
-    // --- three-state Option<Option<T>> on NotaBeneData ---
+    // --- Option<T> on NotaBeneData ---
 
     #[test]
-    fn nota_bene_data_diff_absent_is_outer_none() {
+    fn nota_bene_data_diff_absent_is_none() {
         let data: NotaBeneData = serde_json::from_str(r#"{}"#).unwrap();
         assert!(data.diff.is_none());
     }
 
     #[test]
-    fn nota_bene_data_diff_null_is_some_none() {
+    fn nota_bene_data_diff_null_is_none() {
+        // null and absent both deserialize to None
         let data: NotaBeneData = serde_json::from_str(r#"{"diff":null}"#).unwrap();
-        assert_eq!(data.diff, Some(None));
+        assert!(data.diff.is_none());
     }
 
     #[test]
-    fn nota_bene_data_diff_value_is_some_some() {
+    fn nota_bene_data_diff_value_is_some() {
         let data: NotaBeneData = serde_json::from_str(r#"{"diff":"some patch"}"#).unwrap();
-        assert!(matches!(data.diff, Some(Some(_))));
+        assert!(matches!(data.diff, Some(_)));
     }
 
     #[test]
-    fn nota_bene_data_fixtures_null_is_some_none() {
+    fn nota_bene_data_fixtures_null_is_none() {
         let data: NotaBeneData = serde_json::from_str(r#"{"fixtures":null}"#).unwrap();
-        assert_eq!(data.fixtures, Some(None));
+        assert!(data.fixtures.is_none());
     }
 
     #[test]
     fn nota_bene_data_extra_fields_preserved() {
         // Unknown keys land in `extra` and survive round-trips.
         let add = make_additional(json!({"editor": {"role": "test"}, "diff": null}));
-        match read_nota_bene(&add) {
-            NotaBeneMeta::Present(data) => {
-                assert!(data.extra.contains_key("editor"));
-            }
-            _ => panic!("expected Present"),
-        }
+        let data = read_nota_bene(&add).expect("expected Some");
+        assert!(data.extra.contains_key("editor"));
     }
 
     // --- NotaBeneView ---
@@ -459,17 +342,10 @@ mod tests {
     }
 
     #[test]
-    fn view_set_diff_none_stores_json_null() {
-        let mut add = fresh();
-        NotaBeneView::new(&mut add).set_diff(None);
-        assert_eq!(add["nota-bene"]["diff"], json!(null));
-    }
-
-    #[test]
-    fn view_clear_diff_removes_key() {
+    fn view_set_diff_none_removes_key() {
         let mut add = fresh();
         NotaBeneView::new(&mut add).set_diff(Some("x".to_string()));
-        NotaBeneView::new(&mut add).clear_diff();
+        NotaBeneView::new(&mut add).set_diff(None);
         assert!(!add["nota-bene"].as_object().unwrap().contains_key("diff"));
     }
 
@@ -491,17 +367,20 @@ mod tests {
     }
 
     #[test]
-    fn view_set_fixtures_none_stores_json_null() {
+    fn view_set_fixtures_none_removes_key() {
         let mut add = fresh();
+        // First write a fixture, then set to None → key removed
+        let mut map = IndexMap::new();
+        map.insert(
+            "f1".to_string(),
+            Fixture {
+                description: "d".to_string(),
+                priority: 0,
+                source: "x = 1".to_string(),
+            },
+        );
+        NotaBeneView::new(&mut add).set_fixtures(Some(map));
         NotaBeneView::new(&mut add).set_fixtures(None);
-        assert_eq!(add["nota-bene"]["fixtures"], json!(null));
-    }
-
-    #[test]
-    fn view_clear_fixtures_removes_key() {
-        let mut add = fresh();
-        NotaBeneView::new(&mut add).set_fixtures(None);
-        NotaBeneView::new(&mut add).clear_fixtures();
         assert!(!add["nota-bene"]
             .as_object()
             .unwrap()
@@ -520,21 +399,26 @@ mod tests {
     }
 
     #[test]
-    fn view_set_test_none_stores_json_null() {
-        let mut add = fresh();
-        NotaBeneView::new(&mut add).set_test(None);
-        assert_eq!(add["nota-bene"]["test"], json!(null));
-    }
-
-    #[test]
-    fn view_clear_test_removes_key() {
+    fn view_set_test_none_removes_key() {
         let mut add = fresh();
         NotaBeneView::new(&mut add).set_test(Some(TestMeta {
             name: "t".to_string(),
             source: "s".to_string(),
         }));
-        NotaBeneView::new(&mut add).clear_test();
+        NotaBeneView::new(&mut add).set_test(None);
         assert!(!add["nota-bene"].as_object().unwrap().contains_key("test"));
+    }
+
+    #[test]
+    fn view_set_shas_stores_entries() {
+        let mut add = fresh();
+        let shas = vec![ShaEntry {
+            cell_id: "c1".to_string(),
+            sha: "abc123".to_string(),
+        }];
+        NotaBeneView::new(&mut add).set_shas(shas);
+        assert_eq!(add["nota-bene"]["shas"][0]["cell_id"], json!("c1"));
+        assert_eq!(add["nota-bene"]["shas"][0]["sha"], json!("abc123"));
     }
 
     #[test]

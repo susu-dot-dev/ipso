@@ -358,7 +358,10 @@ fn cell_nb_meta<'a>(nb: &'a serde_json::Value, cell_id: &str) -> &'a serde_json:
 }
 
 /// After a round-trip with no user modifications the `nota-bene` metadata on
-/// every source cell must match the original values.
+/// every source cell must preserve the original non-shas fields.
+/// SHA snapshots are now stamped inside `apply_editor_to_source` for every cell
+/// that goes through the editor, so a new `shas` field will be present — that
+/// is expected and correct.
 #[test]
 fn round_trip_no_changes_preserves_metadata() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
@@ -377,12 +380,21 @@ fn round_trip_no_changes_preserves_metadata() {
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
             .expect("parse saved");
 
-    for cell_id in &["plain-data", "compute-total", "reviewed-pass"] {
+    for cell_id in &["plain-data", "compute-total"] {
         let before = cell_nb_meta(&original, cell_id);
         let after = cell_nb_meta(&saved, cell_id);
+
+        // SHA snapshots are now stamped by apply_editor_to_source on --continue.
+        // Strip `shas` from `after` before comparing with `before`.
+        let mut after_without_shas = after.clone();
+        if let Some(obj) = after_without_shas.as_object_mut() {
+            obj.remove("shas");
+        }
+
         assert_eq!(
-            before, after,
-            "nota-bene metadata changed for cell '{cell_id}' despite no user edits"
+            before, &after_without_shas,
+            "nota-bene metadata changed for cell '{cell_id}' despite no user edits \
+             (ignoring newly-stamped shas)"
         );
     }
     assert!(
@@ -566,11 +578,12 @@ fn edit_add_fixture_by_position() {
     );
 }
 
-/// A cell that was already marked as reviewed (explicit `null` values for
-/// `fixtures`, `diff`, and `test`) keeps those explicit nulls after a
-/// round-trip with no user modifications.
+/// A cell with explicit `null` values for `fixtures`, `diff`, and `test`
+/// no longer preserves those as JSON nulls after a round-trip — in the new
+/// simplified model, `None` is serialized as an absent key, not null.
+/// The nota-bene key itself is preserved (since the cell already had it).
 #[test]
-fn edit_explicit_nulls_survive_round_trip() {
+fn edit_explicit_nulls_become_absent_after_round_trip() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let _ = dir;
 
@@ -598,14 +611,17 @@ fn edit_explicit_nulls_survive_round_trip() {
 
     let meta = cell_nb_meta(&saved, "reviewed-pass");
 
+    // The nota-bene key itself must still exist (cell already had it).
+    assert!(
+        !meta.is_null(),
+        "nota-bene key was removed from 'reviewed-pass'"
+    );
+
+    // In the new model, null fields are absent (not written as null).
     for key in &["fixtures", "diff", "test"] {
         assert!(
-            meta.get(key).is_some(),
-            "key '{key}' was removed from 'reviewed-pass' metadata"
-        );
-        assert!(
-            meta[key].is_null(),
-            "key '{key}' in 'reviewed-pass' is no longer null: {}",
+            meta.get(key).is_none(),
+            "key '{key}' should be absent in 'reviewed-pass' after round-trip, got: {}",
             meta[key]
         );
     }
@@ -768,5 +784,68 @@ fn edit_continue_force_succeeds_despite_conflict() {
     assert!(
         force_status.success(),
         "expected success from --continue --force despite conflict"
+    );
+}
+
+/// After `edit --continue`, cells that went through the editor and have
+/// nota-bene metadata must have a `shas` snapshot stamped on them.
+/// `compute-total` and `reviewed-pass` both have nota-bene in simple.ipynb.
+#[test]
+fn edit_continue_stamps_shas_on_nota_bene_cells() {
+    let (dir, source_path) = setup_fixture("simple.ipynb");
+    let _ = dir;
+
+    let status = run_edit_with_modifications(&source_path, |_| {});
+    assert!(
+        status.success(),
+        "nota-bene edit --continue exited non-zero"
+    );
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
+            .expect("parse saved");
+
+    for cell_id in &["compute-total", "reviewed-pass"] {
+        let meta = cell_nb_meta(&saved, cell_id);
+        assert!(
+            !meta.is_null(),
+            "cell '{cell_id}' has no nota-bene metadata"
+        );
+        let shas = meta.get("shas");
+        assert!(
+            shas.is_some() && shas.unwrap().is_array(),
+            "cell '{cell_id}' is missing shas after --continue; meta: {meta}"
+        );
+        let shas_arr = shas.unwrap().as_array().unwrap();
+        assert!(
+            !shas_arr.is_empty(),
+            "cell '{cell_id}' has an empty shas array after --continue"
+        );
+    }
+}
+
+/// After `edit --continue`, cells without nota-bene metadata must NOT have
+/// shas stamped on them — only cells that actually went through the editor
+/// with nota-bene are touched. `plain-data` has no nota-bene in simple.ipynb.
+#[test]
+fn edit_continue_does_not_stamp_shas_on_plain_cells() {
+    let (dir, source_path) = setup_fixture("simple.ipynb");
+    let _ = dir;
+
+    let status = run_edit_with_modifications(&source_path, |_| {});
+    assert!(
+        status.success(),
+        "nota-bene edit --continue exited non-zero"
+    );
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
+            .expect("parse saved");
+
+    // plain-data has no nota-bene metadata — its nota-bene key must remain absent.
+    let meta = cell_nb_meta(&saved, "plain-data");
+    assert!(
+        meta.is_null(),
+        "plain-data should have no nota-bene metadata after --continue, got: {meta}"
     );
 }
