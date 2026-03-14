@@ -1,17 +1,19 @@
 mod diagnostics;
 mod diff_utils;
 mod edit;
+mod filter;
 mod mcp;
 mod metadata;
 mod notebook;
 mod save;
 mod shas;
+mod view;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
-use notebook::{load_notebook, save_notebook, CellExt};
+use notebook::{load_notebook, load_notebook_from_str, save_notebook, CellExt};
 
 #[derive(Parser)]
 #[command(name = "nota-bene", version = env!("CARGO_PKG_VERSION"))]
@@ -39,6 +41,44 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Read cell metadata as JSON.
+    View {
+        /// Path to the source .ipynb file (used as hint when --stdin is passed).
+        path: PathBuf,
+        /// Read the notebook from stdin instead of the file.
+        #[arg(long)]
+        stdin: bool,
+        /// Filter cells by a key:expr pair.  May be repeated; multiple flags
+        /// combine with AND.  Comma-separated values within a single expr
+        /// combine with OR.
+        ///
+        /// Available filter keys:
+        ///
+        ///   cell:<id>[,<id>...]          Match specific cell IDs
+        ///   index:<n|n..m|n..|..m>       Match by 0-based position
+        ///   test:<null|not null>          Test absent or present
+        ///   fixtures:<null|not null>      Fixtures absent or present
+        ///   diff:<null|not null>          Diff absent or present
+        ///   status.valid:<true|false>     Overall validity
+        ///   diagnostics.type:<type>[,…]   Has a diagnostic of this type
+        ///                                 (missing_sha, stale, diff_conflict,
+        ///                                  missing_field, invalid_value,
+        ///                                  unknown_cell)
+        ///   diagnostics.severity:<level>  Has a diagnostic of this severity
+        ///                                 (error, warning)
+        ///
+        /// Examples:
+        ///   --filter "cell:compute-total"
+        ///   --filter "index:2..4"
+        ///   --filter "diagnostics.type:stale,diff_conflict"
+        ///   --filter "status.valid:false" --filter "test:null"
+        #[arg(long = "filter", verbatim_doc_comment)]
+        filters: Vec<String>,
+        /// Comma-separated list of fields to include in each cell object.
+        /// `cell_id` is always included.  Default: all fields.
+        #[arg(long)]
+        fields: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -63,6 +103,12 @@ fn main() -> Result<()> {
                 run_edit(path)
             }
         }
+        Some(Command::View {
+            path,
+            stdin,
+            filters,
+            fields,
+        }) => run_view(path, stdin, filters, fields),
     }
 }
 
@@ -173,5 +219,60 @@ fn run_edit_clean(source_path: PathBuf) -> Result<()> {
     let display_path = editor_path.canonicalize().unwrap_or(editor_path);
     println!("Editor notebook recreated: {}", display_path.display());
 
+    Ok(())
+}
+
+/// `nota-bene view <path>`: print cell metadata as a JSON array.
+fn run_view(
+    path: PathBuf,
+    stdin: bool,
+    raw_filters: Vec<String>,
+    raw_fields: Option<String>,
+) -> Result<()> {
+    // Load notebook
+    let nb = if stdin {
+        use std::io::Read;
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading notebook from stdin")?;
+        let hint = path.display().to_string();
+        load_notebook_from_str(&content, &hint)
+            .with_context(|| format!("parsing notebook from stdin (path hint: {hint})"))?
+    } else {
+        load_notebook(&path)
+            .with_context(|| format!("loading notebook {}", path.display()))?
+    };
+
+    // Parse filters
+    let filters: Vec<filter::Filter> = raw_filters
+        .iter()
+        .map(|s| filter::Filter::parse(s))
+        .collect::<Result<_>>()?;
+
+    // Parse fields
+    let fields: Option<Vec<String>> = raw_fields.as_deref().map(view::parse_fields);
+
+    // Collect matching code cells and build output
+    let results: Vec<serde_json::Value> = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            // Only consider code cells
+            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
+                return None;
+            }
+            if filter::cell_matches_all(&filters, &nb, cell, i) {
+                let cv = view::CellView::from_cell(&nb, i);
+                Some(cv.to_json_value(&fields))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&results).context("serializing output")?;
+    println!("{json}");
     Ok(())
 }
