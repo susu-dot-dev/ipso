@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::diff_utils::compute_diff;
 use crate::metadata::{Fixture, ShaEntry, TestMeta};
 use crate::notebook::{clear_editor_meta, CellExt};
-use crate::shas::compute_cell_sha;
+use crate::shas::{compute_cell_sha, compute_snapshot};
 
 // ---------------------------------------------------------------------------
 // Section — parsed from the editor notebook
@@ -15,17 +15,10 @@ use crate::shas::compute_cell_sha;
 struct Section {
     cell_id: String,
     fixtures: Vec<(String, Fixture)>,
-    /// True if at least one fixture cell was encountered (even if all had blank bodies).
-    /// Used to distinguish "stub left blank" (→ `Some(None)`) from "no fixture cell at
-    /// all" (→ preserve prior three-state).
-    had_fixture_cells: bool,
     patched_source: String,
     /// None means no test cell was found.
-    /// Some("") means a test cell was present but its body was blank/whitespace-only.
     test_name: Option<String>,
     test_source: Option<String>,
-    /// True if a test cell was encountered (even if its body was blank).
-    had_test_cell: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,18 +126,26 @@ pub fn check_conflicts(source: &Notebook, editor: &Notebook) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Apply the changes from `editor` back onto `source` (in-place).
+///
+/// For every section successfully applied, the SHA snapshot is stamped on the
+/// corresponding source cell — going through the editor IS the review.
 pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Result<()> {
     let sections = parse_sections(editor)?;
 
+    // Compute snapshot once upfront. SHA is based on source content only (not
+    // metadata), so it is stable across the metadata writes we are about to make.
+    let snapshot = compute_snapshot(source);
+
     for section in &sections {
         // Find the matching cell in the source notebook by Jupyter cell ID.
-        let src_cell = source
+        let result = source
             .cells
             .iter_mut()
-            .find(|c| c.cell_id_str() == section.cell_id);
+            .enumerate()
+            .find(|(_, c)| c.cell_id_str() == section.cell_id);
 
-        let src_cell = match src_cell {
-            Some(c) => c,
+        let (cell_idx, src_cell) = match result {
+            Some(pair) => pair,
             None => {
                 eprintln!(
                     "warning: section cell_id '{}' not found in source notebook; skipping",
@@ -156,8 +157,9 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
 
         let original_source = src_cell.source_str();
 
-        // Capture the previous nota-bene state so we can apply three-state semantics.
-        let prev_nb = src_cell.nota_bene();
+        // Track whether the cell already had nota-bene metadata, so we can
+        // preserve the key even when all fields end up absent.
+        let had_nb = src_cell.nota_bene().is_some();
 
         // Strip any editor subkey that may have been left.
         clear_editor_meta(src_cell);
@@ -168,31 +170,13 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
         if !section.fixtures.is_empty() {
             let map: IndexMap<String, Fixture> = section.fixtures.iter().cloned().collect();
             view.set_fixtures(Some(map));
-        } else if section.had_fixture_cells {
-            // At least one fixture cell was present but all had blank/whitespace bodies
-            // (stub left untouched). Treat as "explicitly no fixtures needed".
-            view.set_fixtures(None); // Some(None)
         } else {
-            // No fixture cells at all — preserve prior three-state.
-            match prev_nb.as_present().and_then(|d| d.fixtures.as_ref()) {
-                Some(None) => view.set_fixtures(None), // Some(None) → preserve
-                Some(Some(_)) => view.clear_fixtures(), // had fixtures, now removed
-                None => {}                             // was absent, leave absent
-            }
+            view.set_fixtures(None); // removes the key
         }
 
         // ---- diff -----------------------------------------------------------
         let diff = compute_diff(&original_source, &section.patched_source);
-        match diff {
-            Some(d) => view.set_diff(Some(d)),
-            None => {
-                // No diff. Was cell previously addressed?
-                match prev_nb.as_present().and_then(|d| d.diff.as_ref()) {
-                    Some(_) => view.set_diff(None), // previously set → explicit null
-                    None => view.clear_diff(),      // was absent → keep absent
-                }
-            }
-        }
+        view.set_diff(diff);
 
         // ---- test -----------------------------------------------------------
         let has_test_content = section
@@ -209,22 +193,22 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
                     .unwrap_or_else(|| "<unnamed>".to_string()),
                 source: section.test_source.clone().unwrap_or_default(),
             }));
-        } else if section.had_test_cell {
-            // A test cell was present but its body was blank/whitespace-only
-            // (stub left untouched). Treat as "explicitly no test needed".
-            view.set_test(None); // Some(None)
         } else {
-            match prev_nb.as_present().and_then(|d| d.test.as_ref()) {
-                Some(None) => view.set_test(None),  // preserve explicit null
-                Some(Some(_)) => view.clear_test(), // had test, now empty
-                None => {}                          // was absent, leave absent
-            }
+            view.set_test(None); // removes the key
         }
 
-        // Ensure the nota-bene key exists (marks cell as addressed) if we have a
-        // Present snapshot, even if all sub-keys ended up absent/null.
-        if prev_nb.as_present().is_some() {
+        // Preserve the nota-bene key if the cell already had it, even if all
+        // sub-keys ended up absent (going through the editor IS the review).
+        if had_nb {
             view.mark_addressed();
+        }
+
+        // Stamp the SHA snapshot for this cell — it has been reviewed by going
+        // through the editor. Only stamp cells that have (or now have) nota-bene
+        // metadata; plain passthrough cells stay clean.
+        if src_cell.nota_bene().is_some() {
+            let shas_slice = snapshot[..=cell_idx].to_vec();
+            src_cell.nota_bene_mut().set_shas(shas_slice);
         }
     }
 
@@ -316,12 +300,9 @@ fn parse_sections(editor: &Notebook) -> Result<Vec<Section>> {
 struct SectionBuilder {
     cell_id: String,
     fixtures: Vec<(String, Fixture)>,
-    fixture_index: usize,
-    had_fixture_cells: bool,
     patched_source: Option<String>,
     test_name: Option<String>,
     test_source: Option<String>,
-    had_test_cell: bool,
 }
 
 impl SectionBuilder {
@@ -329,33 +310,24 @@ impl SectionBuilder {
         Self {
             cell_id,
             fixtures: vec![],
-            fixture_index: 0,
-            had_fixture_cells: false,
             patched_source: None,
             test_name: None,
             test_source: None,
-            had_test_cell: false,
         }
     }
 
     fn add_fixture(&mut self, cell: &Cell) {
-        self.had_fixture_cells = true;
         let (name, fixture) = parse_fixture_cell(cell, &self.cell_id, self.fixtures.len());
-        // Skip fixtures whose body is blank/whitespace-only — they are stubs that
-        // the user left untouched. They still set `had_fixture_cells` so that the
-        // apply step can write `Some(None)` rather than silently preserving prior state.
+        // Skip fixtures whose body is blank/whitespace-only.
         if !fixture.source.trim().is_empty() {
             self.fixtures.push((name, fixture));
-            self.fixture_index += 1;
         }
     }
 
     fn add_untagged_fixture(&mut self, cell: &Cell) {
-        self.had_fixture_cells = true;
         let (name, fixture) = parse_fixture_cell(cell, &self.cell_id, self.fixtures.len());
         if !fixture.source.trim().is_empty() {
             self.fixtures.push((name, fixture));
-            self.fixture_index += 1;
         }
     }
 
@@ -364,7 +336,6 @@ impl SectionBuilder {
     }
 
     fn set_test(&mut self, cell: &Cell) {
-        self.had_test_cell = true;
         let src = cell.source_str();
         // Strip %%nb_skip first line if present.
         let src = if let Some(stripped) = src.strip_prefix("%%nb_skip\n") {
@@ -398,11 +369,9 @@ impl SectionBuilder {
         Section {
             cell_id: self.cell_id,
             fixtures: self.fixtures,
-            had_fixture_cells: self.had_fixture_cells,
             patched_source: self.patched_source.unwrap_or_default(),
             test_name: self.test_name,
             test_source: self.test_source,
-            had_test_cell: self.had_test_cell,
         }
     }
 }
@@ -561,9 +530,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         let fix = fixtures.get("my_fix").expect("fixture not found");
         assert_eq!(fix.description, "My desc");
         assert_eq!(fix.priority, 5);
@@ -580,9 +548,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
         let (name, fix) = fixtures.iter().next().unwrap();
         // Auto-generated name contains the parent cell id.
@@ -603,9 +570,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         let fix = fixtures.get("named_fix").unwrap();
         assert_eq!(fix.description, ""); // empty default
         assert_eq!(fix.priority, 0); // positional default
@@ -626,16 +592,15 @@ mod tests {
         );
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let test = data.test.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "check_x");
         assert_eq!(test.source, "assert x == 1");
     }
 
     #[test]
-    fn test_cell_bare_nb_skip_yields_empty_body() {
-        // "%%nb_skip" alone → body is empty → has_test_content = false.
+    fn test_cell_bare_nb_skip_yields_no_test() {
+        // "%%nb_skip" alone → body is empty → has_test_content = false → test key absent.
         let mut meta = blank_cell_metadata();
         meta.additional.insert("nota-bene".to_string(), json!({}));
         let src_cell = Cell::Code {
@@ -649,11 +614,9 @@ mod tests {
         let editor = simple_editor("src", "x = 1", Some("%%nb_skip"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // A test cell was present (%%nb_skip alone) but had no body content.
-        // `had_test_cell = true` → write Some(None) (explicitly no test needed).
-        assert_eq!(data.test, Some(None));
+        let data = source.cells[0].nota_bene().unwrap();
+        // Blank test stub → test key absent.
+        assert!(data.test.is_none());
     }
 
     #[test]
@@ -662,9 +625,8 @@ mod tests {
         let editor = simple_editor("src", "x = 1", Some("%%nb_skip\nassert x == 1"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let test = data.test.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "<unnamed>");
         assert_eq!(test.source, "assert x == 1");
     }
@@ -675,15 +637,14 @@ mod tests {
         let editor = simple_editor("src", "x = 1", Some("assert x == 1"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let test = data.test.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "<unnamed>");
         assert_eq!(test.source, "assert x == 1");
     }
 
     // -------------------------------------------------------------------------
-    // Diff three-state semantics
+    // Diff semantics
     // -------------------------------------------------------------------------
 
     #[test]
@@ -692,9 +653,8 @@ mod tests {
         let editor = simple_editor("src", "x = 99\n", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert!(matches!(data.diff, Some(Some(_))));
+        let data = source.cells[0].nota_bene().unwrap();
+        assert!(data.diff.is_some());
     }
 
     #[test]
@@ -704,14 +664,12 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        assert!(matches!(
-            source.cells[0].nota_bene(),
-            crate::metadata::NotaBeneMeta::Absent
-        ));
+        // Cell had no nota-bene and nothing was written → stays absent.
+        assert!(source.cells[0].nota_bene().is_none());
     }
 
     #[test]
-    fn diff_previously_set_becomes_explicit_null_when_source_now_unchanged() {
+    fn diff_previously_set_becomes_absent_when_source_now_unchanged() {
         let mut source = notebook(vec![code_cell_with_nb(
             "src",
             "x = 1",
@@ -720,14 +678,13 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Previously had a diff; now same source → explicit null.
-        assert_eq!(data.diff, Some(None));
+        let data = source.cells[0].nota_bene().unwrap();
+        // Previously had a diff; now same source → diff key absent.
+        assert!(data.diff.is_none());
     }
 
     // -------------------------------------------------------------------------
-    // Fixture three-state semantics
+    // Fixture semantics
     // -------------------------------------------------------------------------
 
     #[test]
@@ -736,11 +693,8 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // No nota-bene at all (prev was Absent and nothing was written).
-        assert!(matches!(
-            source.cells[0].nota_bene(),
-            crate::metadata::NotaBeneMeta::Absent
-        ));
+        // No nota-bene at all (prev was absent and nothing was written).
+        assert!(source.cells[0].nota_bene().is_none());
     }
 
     #[test]
@@ -753,34 +707,17 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Had fixtures → now cleared → outer None.
+        let data = source.cells[0].nota_bene().unwrap();
+        // Had fixtures → now no fixture cells → fixtures key absent.
         assert!(data.fixtures.is_none());
     }
 
-    #[test]
-    fn fixtures_previously_null_stays_null_when_no_fixtures_added() {
-        let mut source = notebook(vec![code_cell_with_nb(
-            "src",
-            "x = 1",
-            json!({ "fixtures": null }),
-        )]);
-        let editor = simple_editor("src", "x = 1", None);
-        apply_editor_to_source(&mut source, &editor).unwrap();
-
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Was explicit null → stays Some(None).
-        assert_eq!(data.fixtures, Some(None));
-    }
-
     // -------------------------------------------------------------------------
-    // Test three-state semantics
+    // Test semantics
     // -------------------------------------------------------------------------
 
     #[test]
-    fn test_previously_set_now_empty_clears_key() {
+    fn test_previously_set_now_empty_removes_key() {
         let mut source = notebook(vec![code_cell_with_nb(
             "src",
             "x = 1",
@@ -790,44 +727,23 @@ mod tests {
         let editor = simple_editor("src", "x = 1", Some("%%nb_skip"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Test cell present but blank → had_test_cell = true → write Some(None).
-        // (Previously this cleared the key; now blank stub means "explicitly no test".)
-        assert_eq!(data.test, Some(None));
-    }
-
-    #[test]
-    fn test_previously_null_stays_null_when_still_empty() {
-        let mut source = notebook(vec![code_cell_with_nb(
-            "src",
-            "x = 1",
-            json!({ "test": null }),
-        )]);
-        let editor = simple_editor("src", "x = 1", Some("%%nb_skip"));
-        apply_editor_to_source(&mut source, &editor).unwrap();
-
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Was explicit null → stays Some(None).
-        assert_eq!(data.test, Some(None));
+        let data = source.cells[0].nota_bene().unwrap();
+        // Test cell present but blank → test key absent.
+        assert!(data.test.is_none());
     }
 
     // -------------------------------------------------------------------------
-    // mark_addressed
+    // Nota-bene key preservation
     // -------------------------------------------------------------------------
 
     #[test]
-    fn mark_addressed_preserves_nb_key_even_when_all_subkeys_absent() {
+    fn nb_key_preserved_even_when_all_subkeys_absent() {
         let mut source = notebook(vec![code_cell_with_nb("src", "x = 1", json!({}))]);
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // Prior nota-bene was Present → nb key must still exist.
-        assert!(matches!(
-            source.cells[0].nota_bene(),
-            crate::metadata::NotaBeneMeta::Present(_)
-        ));
+        // Prior nota-bene was Some → nb key must still exist.
+        assert!(source.cells[0].nota_bene().is_some());
     }
 
     // -------------------------------------------------------------------------
@@ -840,10 +756,7 @@ mod tests {
         let editor = simple_editor("ghost-cell", "x = 1", None);
         // Should not return an error; source cell stays untouched.
         apply_editor_to_source(&mut source, &editor).unwrap();
-        assert!(matches!(
-            source.cells[0].nota_bene(),
-            crate::metadata::NotaBeneMeta::Absent
-        ));
+        assert!(source.cells[0].nota_bene().is_none());
     }
 
     // -------------------------------------------------------------------------
@@ -861,13 +774,10 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // c1 should have a diff; c2 should not.
-        let nb1 = source.cells[0].nota_bene();
-        assert!(matches!(nb1.as_present().unwrap().diff, Some(Some(_))));
-        assert!(matches!(
-            source.cells[1].nota_bene(),
-            crate::metadata::NotaBeneMeta::Absent
-        ));
+        // c1 should have a diff; c2 should not (and stays absent).
+        let data1 = source.cells[0].nota_bene().unwrap();
+        assert!(data1.diff.is_some());
+        assert!(source.cells[1].nota_bene().is_none());
     }
 
     // -------------------------------------------------------------------------
@@ -887,9 +797,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
     }
 
@@ -919,9 +828,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let test = data.test.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let test = data.test.as_ref().unwrap();
         assert_eq!(
             test.name, "second_test",
             "expected last test cell to win, got: {}",
@@ -952,13 +860,10 @@ mod tests {
         apply_editor_to_source(&mut source, &editor).unwrap();
 
         // The markdown cell must not have been treated as a fixture.
-        // The source cell had no prior nota-bene and nothing was written, so it stays Absent.
+        // The source cell had no prior nota-bene and nothing was written, so it stays absent.
         assert!(
-            matches!(
-                source.cells[0].nota_bene(),
-                crate::metadata::NotaBeneMeta::Absent
-            ),
-            "markdown cell was incorrectly treated as a fixture (cell should remain Absent)"
+            source.cells[0].nota_bene().is_none(),
+            "markdown cell was incorrectly treated as a fixture (cell should remain absent)"
         );
     }
 
@@ -981,13 +886,9 @@ mod tests {
         apply_editor_to_source(&mut source, &editor).unwrap();
 
         // No test should have been parsed from the markdown cell.
-        // The source cell had no prior nota-bene and nothing was written, so it stays Absent.
         assert!(
-            matches!(
-                source.cells[0].nota_bene(),
-                crate::metadata::NotaBeneMeta::Absent
-            ),
-            "markdown cell was incorrectly treated as a test (cell should remain Absent)"
+            source.cells[0].nota_bene().is_none(),
+            "markdown cell was incorrectly treated as a test (cell should remain absent)"
         );
     }
 
@@ -996,10 +897,9 @@ mod tests {
     // -------------------------------------------------------------------------
 
     /// A fixture cell with comment headers but no body is treated as a blank stub
-    /// and filtered out. Because `had_fixture_cells` is true the result is
-    /// `Some(None)` (explicitly no fixtures), not Absent.
+    /// and filtered out. Fixtures key is absent.
     #[test]
-    fn fixture_with_headers_only_and_empty_body_is_filtered_and_yields_null() {
+    fn fixture_with_headers_only_and_empty_body_is_filtered() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
         let fixture_src = "# fixture: empty_fix\n# description: no body here\n# priority: 0";
         let editor = notebook(vec![
@@ -1009,17 +909,15 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        // Empty-body fixture was filtered → fixtures list is empty → Some(None).
-        assert_eq!(
-            data.fixtures,
-            Some(None),
-            "expected Some(None) when only blank-body fixtures are present"
+        // Source cell had no prior nota-bene and the only fixture was blank →
+        // nothing written, cell stays without nota-bene.
+        assert!(
+            source.cells[0].nota_bene().is_none(),
+            "expected cell to remain absent when only blank-body fixtures are present"
         );
     }
 
-    /// A fixture cell with whitespace-only body (spaces/newlines) is also filtered.
+    /// A fixture cell with whitespace-only body is also filtered.
     #[test]
     fn fixture_with_whitespace_only_body_is_filtered() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
@@ -1031,9 +929,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert_eq!(data.fixtures, Some(None));
+        assert!(source.cells[0].nota_bene().is_none());
     }
 
     /// A `# fixture:` line with only whitespace after the colon but a real body
@@ -1049,9 +945,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
         let (name, fix) = fixtures.iter().next().unwrap();
         assert_eq!(fix.source, "x = 7");
@@ -1059,14 +954,13 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Stub round-trip (blank stub → Some(None))
+    // Stub round-trip
     // -------------------------------------------------------------------------
 
     /// When the editor notebook contains a stub fixture cell (headers-only, empty
-    /// body) — as emitted by `edit` for a Present cell with no fixtures — leaving
-    /// it blank on `--continue` should write `Some(None)` for fixtures.
+    /// body), leaving it blank produces no fixtures key.
     #[test]
-    fn blank_stub_fixture_writes_explicit_null() {
+    fn blank_stub_fixture_removes_fixtures_key() {
         // Source cell is Present with no fixtures (fixtures key absent).
         let mut source = notebook(vec![code_cell_with_nb("src", "x = 1", json!({}))]);
         // Editor contains the stub that `edit` would have emitted.
@@ -1079,19 +973,17 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert_eq!(
-            data.fixtures,
-            Some(None),
-            "blank stub fixture should produce Some(None)"
+        let data = source.cells[0].nota_bene().unwrap();
+        assert!(
+            data.fixtures.is_none(),
+            "blank stub fixture should produce absent fixtures key"
         );
     }
 
-    /// When the editor notebook contains a stub test cell (%%nb_skip + # test: only,
-    /// empty body) leaving it blank should write `Some(None)` for test.
+    /// When the editor notebook contains a stub test cell, leaving it blank produces
+    /// no test key.
     #[test]
-    fn blank_stub_test_writes_explicit_null() {
+    fn blank_stub_test_removes_test_key() {
         let mut source = notebook(vec![code_cell_with_nb("src", "x = 1", json!({}))]);
         let editor = notebook(vec![
             section_header("hdr", "src"),
@@ -1100,19 +992,16 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert_eq!(
-            data.test,
-            Some(None),
-            "blank stub test should produce Some(None)"
+        let data = source.cells[0].nota_bene().unwrap();
+        assert!(
+            data.test.is_none(),
+            "blank stub test should produce absent test key"
         );
     }
 
-    /// Whitespace-only test body (after stripping %%nb_skip and # test:) also
-    /// counts as blank and should produce `Some(None)`.
+    /// Whitespace-only test body also counts as blank.
     #[test]
-    fn whitespace_only_test_body_writes_explicit_null() {
+    fn whitespace_only_test_body_removes_test_key() {
         let mut source = notebook(vec![code_cell_with_nb("src", "x = 1", json!({}))]);
         let editor = notebook(vec![
             section_header("hdr", "src"),
@@ -1126,42 +1015,15 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert_eq!(
-            data.test,
-            Some(None),
-            "whitespace-only test body should produce Some(None)"
-        );
-    }
-
-    /// A previously-null test (`Some(None)`) stays null when no test cell is
-    /// present at all (three-state preserve, not the new stub path).
-    #[test]
-    fn no_test_cell_with_prev_null_stays_null() {
-        let mut source = notebook(vec![code_cell_with_nb(
-            "src",
-            "x = 1",
-            json!({ "test": null }),
-        )]);
-        // Editor has no test cell at all.
-        let editor = notebook(vec![
-            section_header("hdr", "src"),
-            editor_cell("ps", "x = 1", "patched-source", "src"),
-        ]);
-        apply_editor_to_source(&mut source, &editor).unwrap();
-
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        assert_eq!(
-            data.test,
-            Some(None),
-            "three-state preserve should keep Some(None)"
+        let data = source.cells[0].nota_bene().unwrap();
+        assert!(
+            data.test.is_none(),
+            "whitespace-only test body should produce absent test key"
         );
     }
 
     /// A mix of one blank and one real fixture: the blank one is filtered, the
-    /// real one is kept, and the result is a single-entry fixtures map.
+    /// real one is kept.
     #[test]
     fn mix_of_blank_and_real_fixtures_keeps_only_real() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
@@ -1180,9 +1042,8 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let nb = source.cells[0].nota_bene();
-        let data = nb.as_present().unwrap();
-        let fixtures = data.fixtures.as_ref().unwrap().as_ref().unwrap();
+        let data = source.cells[0].nota_bene().unwrap();
+        let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1, "only the real fixture should be kept");
         assert!(
             fixtures.contains_key("real_fix"),

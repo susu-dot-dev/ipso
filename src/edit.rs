@@ -3,7 +3,7 @@ use nbformat::v4::{Cell, Notebook};
 use serde_json::json;
 
 use crate::diff_utils::{apply_diff, reconstruct_original};
-use crate::metadata::{Fixture, NotaBeneMeta};
+use crate::metadata::{Fixture, NotaBeneData};
 use crate::notebook::{blank_cell_metadata, new_cell_id, CellExt};
 use crate::shas::{compute_snapshot, staleness, Staleness};
 
@@ -31,16 +31,16 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
             Cell::Code { .. } => {
                 let nb_meta = cell.nota_bene();
                 match &nb_meta {
-                    NotaBeneMeta::Absent => {
+                    None => {
                         cells.push(make_section_header_no_tests(cell, cell_pos));
                         cells.push(make_source_cell_passthrough(cell));
                     }
-                    NotaBeneMeta::Present(data) => {
+                    Some(data) => {
                         let stale = staleness(source, idx);
                         cells.push(make_section_header_with_meta(cell, cell_pos, data, &stale)?);
 
                         // Fixture cells — or a stub if none exist
-                        if let Some(Some(fixtures)) = &data.fixtures {
+                        if let Some(fixtures) = &data.fixtures {
                             let mut sorted: Vec<(&String, &Fixture)> = fixtures.iter().collect();
                             sorted.sort_by_key(|(_, f)| f.priority);
                             for (name, fixture) in sorted {
@@ -53,9 +53,9 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
 
                         // Patched source cell (borrows the source cell's Jupyter ID)
                         let patched_source = match &data.diff {
-                            Some(Some(diff)) => apply_diff(&cell.source_str(), diff)
+                            Some(diff) => apply_diff(&cell.source_str(), diff)
                                 .unwrap_or_else(|_| cell.source_str()),
-                            _ => cell.source_str(),
+                            None => cell.source_str(),
                         };
                         cells.push(make_patched_source_cell(
                             cell.cell_id_str(),
@@ -64,8 +64,8 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
 
                         // Test cell
                         let (test_name, test_src) = match &data.test {
-                            Some(Some(t)) => (t.name.clone(), t.source.clone()),
-                            _ => ("<unnamed>".to_string(), String::new()),
+                            Some(t) => (t.name.clone(), t.source.clone()),
+                            None => ("<unnamed>".to_string(), String::new()),
                         };
                         cells.push(make_test_cell(cell.cell_id_str(), &test_name, &test_src));
                     }
@@ -144,7 +144,7 @@ fn make_section_header_no_tests(cell: &Cell, pos: usize) -> Cell {
 fn make_section_header_with_meta(
     cell: &Cell,
     pos: usize,
-    data: &crate::metadata::NotaBeneData,
+    data: &NotaBeneData,
     stale: &Staleness,
 ) -> Result<Cell> {
     let cell_id = cell.cell_id_str();
@@ -176,7 +176,7 @@ fn make_section_header_with_meta(
         parts.push(format!("**Why:** {}", reasons.join("; ")));
     }
 
-    if let Some(Some(diff)) = &data.diff {
+    if let Some(diff) = &data.diff {
         let original =
             reconstruct_original(&cell.source_str(), diff).unwrap_or_else(|_| cell.source_str());
         parts.push(format!(

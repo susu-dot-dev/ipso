@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::metadata::{read_nota_bene, NotaBeneMeta, NotaBeneView};
+use crate::metadata::{read_nota_bene, NotaBeneData, NotaBeneView};
 
 // ---------------------------------------------------------------------------
 // CellExt — helper methods on nbformat Cell
@@ -16,7 +16,7 @@ pub trait CellExt {
     fn source_str(&self) -> String;
     fn additional(&self) -> &HashMap<String, Value>;
     fn additional_mut(&mut self) -> &mut HashMap<String, Value>;
-    fn nota_bene(&self) -> NotaBeneMeta;
+    fn nota_bene(&self) -> Option<NotaBeneData>;
     fn nota_bene_mut(&mut self) -> NotaBeneView<'_>;
     fn editor_role(&self) -> Option<String>;
     fn editor_cell_id(&self) -> Option<String>;
@@ -59,7 +59,7 @@ impl CellExt for Cell {
         }
     }
 
-    fn nota_bene(&self) -> NotaBeneMeta {
+    fn nota_bene(&self) -> Option<NotaBeneData> {
         read_nota_bene(self.additional())
     }
 
@@ -269,19 +269,13 @@ mod tests {
 
     #[test]
     fn nota_bene_absent_when_no_key() {
-        assert!(matches!(
-            code_cell("c1", vec![]).nota_bene(),
-            crate::metadata::NotaBeneMeta::Absent
-        ));
+        assert!(code_cell("c1", vec![]).nota_bene().is_none());
     }
 
     #[test]
     fn nota_bene_present_when_key_exists() {
         let cell = code_cell_with_nb("c1", vec![], json!({"diff": "d"}));
-        assert!(matches!(
-            cell.nota_bene(),
-            crate::metadata::NotaBeneMeta::Present(_)
-        ));
+        assert!(cell.nota_bene().is_some());
     }
 
     // --- clear_editor_meta ---
@@ -294,13 +288,10 @@ mod tests {
             json!({"editor": {"role": "test"}, "diff": "d"}),
         );
         clear_editor_meta(&mut cell);
-        if let crate::metadata::NotaBeneMeta::Present(data) = cell.nota_bene() {
-            assert!(!data.extra.contains_key("editor"));
-            // diff should still be there
-            assert!(data.diff.is_some());
-        } else {
-            panic!("expected Present");
-        }
+        let data = cell.nota_bene().expect("expected Some");
+        assert!(!data.extra.contains_key("editor"));
+        // diff should still be there
+        assert!(data.diff.is_some());
     }
 
     #[test]
