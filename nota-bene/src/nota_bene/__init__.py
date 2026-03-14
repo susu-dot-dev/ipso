@@ -29,6 +29,7 @@ __all__ = [
     "_runner",
     "SubtestResult",
     "execute_cell",
+    "register_nb_skip",
     "register_teardown",
     "subtest",
 ]
@@ -92,6 +93,30 @@ def subtest(name: str) -> Generator[None, None, None]:
                 traceback=None,
             )
         )
+
+
+def register_nb_skip() -> None:
+    """Register the %%nb_skip IPython cell magic used by the test editor.
+
+    Call this once at the top of a nota-bene editor notebook. The magic
+    silently skips any cell it prefixes so that running all cells does not
+    accidentally execute test cells.
+    """
+    from IPython.core.magic import register_cell_magic  # type: ignore[import-not-found]
+
+    @register_cell_magic  # type: ignore[untyped-decorator]
+    def nb_skip(line: str, cell: str) -> None:  # noqa: ARG001
+        """Skip this cell. Remove %%nb_skip to run it."""
+        first_line = cell.splitlines()[0] if cell.strip() else "empty cell"
+        comment = (
+            f"The {first_line} cell is skipped"
+            + "All test cells are skipped by default in edit mode."
+            + "This is to ensure that running a notebook in edit mode mirrors the behavior of the actual test run"
+            + "where only a single test cell is executed per-kernel."
+            + "While in edit-mode, you can execute a cell by removing the %%nb_skip line."
+            + "When you save the notebook, any remaining %%nb_skip lines are removed."
+        )
+        print(comment)
 
 
 def register_teardown(callback: Callable[[], None]) -> None:

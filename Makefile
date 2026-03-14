@@ -1,5 +1,10 @@
 .PHONY: help build clean fmt setup-sample-project e2e-opencode \
-        nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build
+        nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build \
+        test-setup test clean-venv
+
+VENV := tests/.venv
+PYTHON := $(VENV)/bin/python
+PIP    := $(VENV)/bin/pip
 
 .DEFAULT_GOAL := help
 
@@ -25,7 +30,22 @@ help:
 	@echo ""
 	@echo "  make help               Show this help"
 
-build:
+# ---- Rust integration test environment -------------------------------------
+
+$(PYTHON):
+	python3 -m venv $(VENV)
+
+test-setup: $(PYTHON)
+	$(PIP) install --quiet nbclient ipykernel ipython
+	$(PIP) install --quiet -e nota-bene/
+
+test: test-setup
+	cargo test
+
+clean-venv:
+	rm -rf $(VENV)
+
+# ---- Rust build / format ---------------------------------------------------
 	cargo build
 
 clean:
