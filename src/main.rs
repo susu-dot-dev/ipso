@@ -240,8 +240,7 @@ fn run_view(
         load_notebook_from_str(&content, &hint)
             .with_context(|| format!("parsing notebook from stdin (path hint: {hint})"))?
     } else {
-        load_notebook(&path)
-            .with_context(|| format!("loading notebook {}", path.display()))?
+        load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?
     };
 
     // Parse filters
