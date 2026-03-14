@@ -156,7 +156,6 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
 
 /// Recompute and store the SHA snapshot for a single cell at `cell_index`.
 /// Only stamps the cell if it has nota-bene metadata.
-#[allow(dead_code)]
 pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
     let snapshot = compute_snapshot(nb);
     let cell = &mut nb.cells[cell_index];
@@ -422,6 +421,25 @@ mod tests {
         let mut nb = notebook(vec![c1]);
         accept_cell(&mut nb, 0);
         assert!(nb.cells[0].nota_bene().is_none());
+    }
+
+    #[test]
+    fn accept_cell_reaccept_overwrites_shas() {
+        let c1 = plain_cell("c1", "x = 1");
+        let c2 = cell_with_nb_no_shas("c2", "y = 2");
+        let mut nb = notebook(vec![c1, c2]);
+        accept_cell(&mut nb, 1);
+        let shas_before = nb.cells[1].nota_bene().unwrap().shas.unwrap();
+
+        // Modify c1's source, then re-accept c2 — shas should change
+        nb.cells[0] = plain_cell("c1", "x = 999");
+        accept_cell(&mut nb, 1);
+        let shas_after = nb.cells[1].nota_bene().unwrap().shas.unwrap();
+
+        assert_ne!(
+            shas_before[0].sha, shas_after[0].sha,
+            "shas should reflect new c1 source"
+        );
     }
 
     #[test]

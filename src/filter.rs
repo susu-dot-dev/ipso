@@ -373,4 +373,113 @@ mod tests {
         let f2 = Filter::parse("cell:other").unwrap();
         assert!(!cell_matches_all(&[f1, f2], &nb, &cell, 0));
     }
+
+    // --- FilterKey::Diff ---
+
+    #[test]
+    fn filter_diff_null_when_absent() {
+        let cell = plain_cell("c1", "x = 1");
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diff:null").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_diff_not_null_when_present() {
+        let cell = cell_with_nb("c1", "x = 1", json!({"diff": "some diff"}));
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diff:not null").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_diff_null_when_diff_present() {
+        let cell = cell_with_nb("c1", "x = 1", json!({"diff": "some diff"}));
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diff:null").unwrap();
+        assert!(!f.matches(&nb, &cell, 0));
+    }
+
+    // --- FilterKey::Fixtures ---
+
+    #[test]
+    fn filter_fixtures_null_when_absent() {
+        let cell = plain_cell("c1", "x = 1");
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("fixtures:null").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_fixtures_not_null_when_present() {
+        let cell = cell_with_nb(
+            "c1",
+            "x = 1",
+            json!({"fixtures": {"f1": {"description": "d", "priority": 1, "source": "s"}}}),
+        );
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("fixtures:not null").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_fixtures_null_for_empty_map() {
+        let cell = cell_with_nb("c1", "x = 1", json!({"fixtures": {}}));
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("fixtures:null").unwrap();
+        assert!(
+            f.matches(&nb, &cell, 0),
+            "empty fixture map should count as null"
+        );
+    }
+
+    // --- FilterKey::DiagnosticsType ---
+
+    #[test]
+    fn filter_diagnostics_type_missing_sha() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // nb meta but no shas
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.type:missing_sha").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_diagnostics_type_no_match() {
+        let cell = plain_cell("c1", "x = 1"); // no nb meta → valid, no diagnostics
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.type:stale").unwrap();
+        assert!(!f.matches(&nb, &cell, 0));
+    }
+
+    // --- FilterKey::DiagnosticsSeverity ---
+
+    #[test]
+    fn filter_diagnostics_severity_warning() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // missing_sha → warning
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.severity:warning").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_diagnostics_severity_error_no_match() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // only missing_sha (warning)
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.severity:error").unwrap();
+        assert!(!f.matches(&nb, &cell, 0));
+    }
+
+    // --- OR semantics through Filter::matches ---
+
+    #[test]
+    fn filter_or_cell_ids() {
+        let c1 = plain_cell("c1", "x = 1");
+        let c2 = plain_cell("c2", "y = 2");
+        let c3 = plain_cell("c3", "z = 3");
+        let nb = notebook(vec![c1.clone(), c2.clone(), c3.clone()]);
+        let f = Filter::parse("cell:c1,c3").unwrap();
+        assert!(f.matches(&nb, &c1, 0));
+        assert!(!f.matches(&nb, &c2, 1));
+        assert!(f.matches(&nb, &c3, 2));
+    }
 }

@@ -1117,3 +1117,947 @@ fn view_no_filters_returns_empty_array_for_no_code_cells() {
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
     assert_eq!(arr.len(), 0);
 }
+
+// ===========================================================================
+// nb scaffold tests
+// ===========================================================================
+
+/// Run `nota-bene scaffold <args>` and return (stdout, stderr, exit status).
+fn run_scaffold(args: &[&str]) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("scaffold");
+    for a in args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene scaffold");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+#[test]
+fn scaffold_fixture_produces_valid_json() {
+    let (stdout, _stderr, status) = run_scaffold(&[
+        "fixture",
+        "--name",
+        "setup_df",
+        "--description",
+        "Small test dataframe",
+        "--priority",
+        "1",
+        "--source",
+        "global df; df = pd.DataFrame({'amount': [1, 2, 3]})",
+    ]);
+    assert!(status.success());
+    let val: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(val["fixtures"]["setup_df"].is_object());
+    assert_eq!(
+        val["fixtures"]["setup_df"]["description"].as_str(),
+        Some("Small test dataframe")
+    );
+    assert_eq!(val["fixtures"]["setup_df"]["priority"].as_i64(), Some(1));
+    assert!(val["fixtures"]["setup_df"]["source"].is_string());
+}
+
+#[test]
+fn scaffold_fixture_minimal_uses_defaults() {
+    let (stdout, _stderr, status) = run_scaffold(&["fixture", "--name", "my_fix"]);
+    assert!(status.success());
+    let val: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let fix = &val["fixtures"]["my_fix"];
+    assert_eq!(fix["description"].as_str(), Some(""));
+    assert_eq!(fix["priority"].as_i64(), Some(0));
+    assert_eq!(fix["source"].as_str(), Some(""));
+}
+
+#[test]
+fn scaffold_test_produces_valid_json() {
+    let (stdout, _stderr, status) = run_scaffold(&[
+        "test",
+        "--name",
+        "test_total",
+        "--source",
+        "assert total == 6",
+    ]);
+    assert!(status.success());
+    let val: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(val["test"]["name"].as_str(), Some("test_total"));
+    assert_eq!(val["test"]["source"].as_str(), Some("assert total == 6"));
+}
+
+#[test]
+fn scaffold_test_minimal_uses_defaults() {
+    let (stdout, _stderr, status) = run_scaffold(&["test", "--name", "test_foo"]);
+    assert!(status.success());
+    let val: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(val["test"]["name"].as_str(), Some("test_foo"));
+    assert_eq!(val["test"]["source"].as_str(), Some(""));
+}
+
+// ===========================================================================
+// nb status tests
+// ===========================================================================
+
+/// Run `nota-bene status <args>` and return (stdout, stderr, exit status).
+fn run_status(
+    source_path: &Path,
+    extra_args: &[&str],
+) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("status").arg(source_path);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene status");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+#[test]
+fn status_exits_nonzero_when_invalid_cells_exist() {
+    // simple.ipynb has cells with nota-bene but no shas → missing_sha → invalid
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) = run_status(&source_path, &[]);
+    assert!(
+        !status.success(),
+        "expected non-zero exit for invalid cells"
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(!arr.is_empty(), "expected at least one invalid cell");
+    // Each cell should only have cell_id and status
+    for cell in &arr {
+        assert!(cell.get("cell_id").is_some());
+        assert!(cell.get("status").is_some());
+        assert!(
+            cell.get("source").is_none(),
+            "status should only show cell_id,status"
+        );
+    }
+}
+
+#[test]
+fn status_exits_zero_when_all_cells_valid() {
+    // Accept all cells first, then check status
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // Accept all
+    let accept_out = std::process::Command::new(common::binary())
+        .args(["accept", source_path.to_str().unwrap(), "--all"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .status()
+        .expect("spawn accept");
+    assert!(accept_out.success());
+    let (stdout, _stderr, status) = run_status(&source_path, &[]);
+    assert!(
+        status.success(),
+        "expected zero exit when all cells are valid"
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(arr.is_empty());
+}
+
+#[test]
+fn status_with_filter_narrows_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, _status) = run_status(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // Should only contain compute-total if it's invalid
+    for cell in &arr {
+        assert_eq!(cell["cell_id"].as_str(), Some("compute-total"));
+    }
+}
+
+// ===========================================================================
+// nb accept tests
+// ===========================================================================
+
+/// Run `nota-bene accept <args>` and return (stdout, stderr, exit status).
+fn run_accept(
+    source_path: &Path,
+    extra_args: &[&str],
+) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("accept").arg(source_path);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene accept");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+#[test]
+fn accept_requires_all_or_filter() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (_stdout, _stderr, status) = run_accept(&source_path, &[]);
+    assert!(
+        !status.success(),
+        "accept without --all or --filter should fail"
+    );
+}
+
+#[test]
+fn accept_all_and_filter_together_rejected() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (_stdout, _stderr, status) =
+        run_accept(&source_path, &["--all", "--filter", "cell:compute-total"]);
+    assert!(
+        !status.success(),
+        "--all and --filter together should be rejected"
+    );
+}
+
+#[test]
+fn accept_all_makes_cells_valid() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // First confirm cells are invalid
+    let (_stdout, _stderr, status_before) = run_status(&source_path, &[]);
+    assert!(
+        !status_before.success(),
+        "cells should be invalid before accept"
+    );
+
+    // Accept all
+    let (_stdout, _stderr, accept_status) = run_accept(&source_path, &["--all"]);
+    assert!(accept_status.success());
+
+    // Now status should pass
+    let (_stdout, _stderr, status_after) = run_status(&source_path, &[]);
+    assert!(
+        status_after.success(),
+        "cells should be valid after accept --all"
+    );
+}
+
+#[test]
+fn accept_with_filter_only_accepts_matching_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // Accept only compute-total
+    let (_stdout, _stderr, accept_status) =
+        run_accept(&source_path, &["--filter", "cell:compute-total"]);
+    assert!(accept_status.success());
+
+    // compute-total should be valid now
+    let (stdout, _stderr, _) = run_view(
+        &source_path,
+        &[
+            "--filter",
+            "cell:compute-total",
+            "--fields",
+            "cell_id,status",
+        ],
+    );
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["status"]["valid"], true);
+
+    // reviewed-pass should still be invalid (has nb meta but no shas)
+    let (stdout2, _stderr, _) = run_view(
+        &source_path,
+        &[
+            "--filter",
+            "cell:reviewed-pass",
+            "--fields",
+            "cell_id,status",
+        ],
+    );
+    let arr2: Vec<serde_json::Value> = serde_json::from_str(&stdout2).expect("valid JSON");
+    assert_eq!(arr2.len(), 1);
+    assert_eq!(arr2[0]["status"]["valid"], false);
+}
+
+// ===========================================================================
+// nb update tests
+// ===========================================================================
+
+/// Run `nota-bene update <args>` and return (stdout, stderr, exit status).
+fn run_update(
+    source_path: &Path,
+    extra_args: &[&str],
+) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("update").arg(source_path);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene update");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+#[test]
+fn update_set_test_on_cell() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "plain-data",
+        "test": {
+            "name": "test_data",
+            "source": "assert data == [1, 2, 3]"
+        }
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    // Verify test was written
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr[0]["test"]["name"].as_str(), Some("test_data"));
+}
+
+#[test]
+fn update_clear_test_with_null() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // compute-total has a test; clear it
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "test": null,
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        arr[0]["test"].is_null(),
+        "test should be null after clearing"
+    );
+}
+
+#[test]
+fn update_merge_fixtures() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // compute-total already has setup_data fixture; add another
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "fixtures": {
+            "new_fixture": {
+                "description": "new one",
+                "priority": 2,
+                "source": "x = 42"
+            }
+        }
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // Both old and new fixtures should be present
+    assert!(
+        arr[0]["fixtures"]["setup_data"].is_object(),
+        "old fixture should be preserved"
+    );
+    assert!(
+        arr[0]["fixtures"]["new_fixture"].is_object(),
+        "new fixture should be added"
+    );
+}
+
+#[test]
+fn update_remove_specific_fixture() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "fixtures": {
+            "setup_data": null
+        }
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        arr[0]["fixtures"].is_null(),
+        "fixtures should be null after removing only fixture"
+    );
+}
+
+#[test]
+fn update_clear_all_fixtures_with_null() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "fixtures": null,
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(arr[0]["fixtures"].is_null(), "fixtures should be null");
+}
+
+#[test]
+fn update_unknown_cell_fails() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "nonexistent-cell",
+        "test": null,
+    });
+    let (_stdout, stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(!status.success());
+    let diag: serde_json::Value = serde_json::from_str(&stderr).expect("valid JSON diagnostics");
+    assert_eq!(diag["valid"], false);
+    assert!(diag["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| { d["type"].as_str() == Some("unknown_cell") }));
+}
+
+#[test]
+fn update_invalid_fixture_missing_fields_fails() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "fixtures": {
+            "bad_fixture": {
+                "description": "missing priority and source"
+            }
+        }
+    });
+    let (_stdout, stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(!status.success());
+    let diag: serde_json::Value = serde_json::from_str(&stderr).expect("valid JSON diagnostics");
+    assert_eq!(diag["valid"], false);
+    let types: Vec<&str> = diag["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["type"].as_str())
+        .collect();
+    assert!(
+        types.contains(&"missing_field"),
+        "should report missing_field diagnostics"
+    );
+}
+
+#[test]
+fn update_batch_multiple_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!([
+        {
+            "cell_id": "plain-data",
+            "test": {
+                "name": "test_plain",
+                "source": "assert True"
+            }
+        },
+        {
+            "cell_id": "compute-total",
+            "diff": "some diff text"
+        }
+    ]);
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &[]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    let plain = arr
+        .iter()
+        .find(|c| c["cell_id"].as_str() == Some("plain-data"))
+        .unwrap();
+    assert_eq!(plain["test"]["name"].as_str(), Some("test_plain"));
+    let compute = arr
+        .iter()
+        .find(|c| c["cell_id"].as_str() == Some("compute-total"))
+        .unwrap();
+    assert_eq!(compute["diff"].as_str(), Some("some diff text"));
+}
+
+#[test]
+fn update_requires_data_or_data_file() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (_stdout, _stderr, status) = run_update(&source_path, &[]);
+    assert!(
+        !status.success(),
+        "update without --data or --data-file should fail"
+    );
+}
+
+#[test]
+fn update_data_file_works() {
+    let (dir, source_path) = setup_fixture("simple.ipynb");
+    let data_path = dir.path().join("updates.json");
+    let data = serde_json::json!({
+        "cell_id": "plain-data",
+        "diff": "a diff string"
+    });
+    fs::write(&data_path, data.to_string()).expect("write data file");
+
+    let (_stdout, _stderr, status) =
+        run_update(&source_path, &["--data-file", data_path.to_str().unwrap()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(arr[0]["diff"].as_str(), Some("a diff string"));
+}
+
+// ===========================================================================
+// Additional integration tests — coverage gaps
+// ===========================================================================
+
+// --- update: --stdin mode ---
+
+#[test]
+fn update_stdin_mode_writes_to_stdout() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let content = fs::read_to_string(&source_path).expect("read fixture");
+    let data = serde_json::json!({
+        "cell_id": "plain-data",
+        "diff": "stdin diff"
+    });
+    let child = std::process::Command::new(common::binary())
+        .args([
+            "update",
+            source_path.to_str().unwrap(),
+            "--stdin",
+            "--data",
+            &data.to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    use std::io::Write;
+    let mut child = child;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success());
+    // Stdout should contain the modified notebook JSON
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let nb: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid notebook JSON");
+    assert!(nb["cells"].is_array());
+    // Original file should be unchanged
+    let original = fs::read_to_string(&source_path).expect("read original");
+    let orig_nb: serde_json::Value = serde_json::from_str(&original).expect("parse original");
+    // plain-data in original should NOT have a diff
+    let plain_orig = orig_nb["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"].as_str() == Some("plain-data"))
+        .unwrap();
+    assert!(
+        plain_orig["metadata"].get("nota-bene").is_none()
+            || plain_orig["metadata"]["nota-bene"].get("diff").is_none()
+            || plain_orig["metadata"]["nota-bene"]["diff"].is_null(),
+        "original file should not be modified in --stdin mode"
+    );
+}
+
+// --- update: both --data and --data-file rejected ---
+
+#[test]
+fn update_both_data_and_data_file_rejected() {
+    let (dir, source_path) = setup_fixture("simple.ipynb");
+    let data_path = dir.path().join("data.json");
+    fs::write(&data_path, r#"{"cell_id":"plain-data"}"#).unwrap();
+    let (_stdout, _stderr, status) = run_update(
+        &source_path,
+        &[
+            "--data",
+            r#"{"cell_id":"plain-data"}"#,
+            "--data-file",
+            data_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        !status.success(),
+        "should reject both --data and --data-file"
+    );
+}
+
+// --- update: absent field = no-op ---
+
+#[test]
+fn update_absent_field_preserves_existing() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // compute-total has a test; update only sets diff, should preserve test
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "diff": "new diff"
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        arr[0]["test"].is_object(),
+        "existing test should be preserved when not in update"
+    );
+    assert_eq!(arr[0]["diff"].as_str(), Some("new diff"));
+}
+
+// --- update: validation does not mutate notebook ---
+
+#[test]
+fn update_validation_failure_does_not_modify_notebook() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let before = fs::read(&source_path).expect("read before");
+    let data = serde_json::json!({
+        "cell_id": "nonexistent",
+        "test": null,
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(!status.success());
+    let after = fs::read(&source_path).expect("read after");
+    assert_eq!(
+        before, after,
+        "notebook should not be modified on validation failure"
+    );
+}
+
+// --- update: source and status fields ignored ---
+
+#[test]
+fn update_ignores_source_and_status_fields() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    // These extra fields should not cause an error and should be ignored
+    let data = serde_json::json!({
+        "cell_id": "plain-data",
+        "source": "should be ignored",
+        "status": {"valid": true, "diagnostics": []},
+        "diff": "real update"
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // Source should NOT have changed
+    assert_ne!(arr[0]["source"].as_str(), Some("should be ignored"));
+    assert_eq!(arr[0]["diff"].as_str(), Some("real update"));
+}
+
+// --- update: empty array is no-op ---
+
+#[test]
+fn update_empty_array_is_noop() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let before = fs::read(&source_path).expect("read before");
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", "[]"]);
+    assert!(status.success());
+    let after = fs::read(&source_path).expect("read after");
+    assert_eq!(
+        before, after,
+        "empty update array should not modify notebook"
+    );
+}
+
+// --- update: upsert existing fixture values ---
+
+#[test]
+fn update_upsert_existing_fixture() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({
+        "cell_id": "compute-total",
+        "fixtures": {
+            "setup_data": {
+                "description": "Updated description",
+                "priority": 99,
+                "source": "data = [100]"
+            }
+        }
+    });
+    let (_stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    let fix = &arr[0]["fixtures"]["setup_data"];
+    assert_eq!(fix["description"].as_str(), Some("Updated description"));
+    assert_eq!(fix["priority"].as_i64(), Some(99));
+}
+
+// --- status: --stdin mode ---
+
+#[test]
+fn status_stdin_mode() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let content = fs::read_to_string(&source_path).expect("read fixture");
+    let child = std::process::Command::new(common::binary())
+        .args(["status", source_path.to_str().unwrap(), "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    use std::io::Write;
+    let mut child = child;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    // simple.ipynb has invalid cells → non-zero exit
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(!arr.is_empty());
+}
+
+// --- accept: --stdin mode ---
+
+#[test]
+fn accept_stdin_mode_writes_to_stdout() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let content = fs::read_to_string(&source_path).expect("read fixture");
+    let child = std::process::Command::new(common::binary())
+        .args(["accept", source_path.to_str().unwrap(), "--stdin", "--all"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    use std::io::Write;
+    let mut child = child;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let nb: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid notebook JSON");
+    assert!(nb["cells"].is_array());
+    // Original file should be unchanged
+    let after = fs::read_to_string(&source_path).expect("read after");
+    let after_nb: serde_json::Value = serde_json::from_str(&after).unwrap();
+    // The original should NOT have shas stamped (accept wrote to stdout, not file)
+    let ct = after_nb["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"].as_str() == Some("compute-total"))
+        .unwrap();
+    assert!(
+        ct["metadata"]["nota-bene"].get("shas").is_none()
+            || ct["metadata"]["nota-bene"]["shas"].is_null(),
+        "original file should not be modified in --stdin mode"
+    );
+}
+
+// --- accept: plain cells untouched by --all ---
+
+#[test]
+fn accept_all_does_not_stamp_plain_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (_stdout, _stderr, status) = run_accept(&source_path, &["--all"]);
+    assert!(status.success());
+
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // plain-data has no nota-bene metadata, so accept should not add any
+    assert!(
+        arr[0]["fixtures"].is_null() && arr[0]["test"].is_null() && arr[0]["diff"].is_null(),
+        "plain cell should remain untouched by accept"
+    );
+}
+
+// --- accept: with diagnostics.type filter ---
+
+#[test]
+fn accept_with_diagnostics_type_filter() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (_stdout, _stderr, status) =
+        run_accept(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+    assert!(status.success());
+
+    // Cells that had missing_sha should now be valid
+    let (stdout, _stderr, _) =
+        run_view(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        arr.is_empty(),
+        "no cells should have missing_sha after accepting them"
+    );
+}
+
+// --- view: filter by diff ---
+
+#[test]
+fn view_filter_diff_null() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) = run_view(&source_path, &["--filter", "diff:null"]);
+    assert!(status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert!(
+            cell["diff"].is_null(),
+            "all cells with diff:null should have null diff"
+        );
+    }
+}
+
+// --- view: filter by diagnostics.type ---
+
+#[test]
+fn view_filter_diagnostics_type() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) =
+        run_view(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+    assert!(status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    // Only cells with nota-bene but no shas should match
+    for cell in &arr {
+        assert!(
+            cell["status"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["type"].as_str() == Some("missing_sha")),
+            "each result should have a missing_sha diagnostic"
+        );
+    }
+}
+
+// --- view: filter by diagnostics.severity ---
+
+#[test]
+fn view_filter_diagnostics_severity() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let (stdout, _stderr, status) =
+        run_view(&source_path, &["--filter", "diagnostics.severity:warning"]);
+    assert!(status.success());
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
+    for cell in &arr {
+        assert!(
+            cell["status"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["severity"].as_str() == Some("warning")),
+            "each result should have a warning-level diagnostic"
+        );
+    }
+}
+
+// --- view: --stdin with nonexistent path as hint ---
+
+#[test]
+fn view_stdin_nonexistent_path_hint_works() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let content = fs::read_to_string(&source_path).expect("read fixture");
+    let child = std::process::Command::new(common::binary())
+        .args(["view", "/nonexistent/path.ipynb", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    use std::io::Write;
+    let mut child = child;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(content.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "should succeed with --stdin even if path doesn't exist"
+    );
+}
+
+// --- scaffold: missing --name fails ---
+
+#[test]
+fn scaffold_fixture_missing_name_fails() {
+    let (_stdout, _stderr, status) = run_scaffold(&["fixture", "--description", "d"]);
+    assert!(!status.success());
+}
+
+#[test]
+fn scaffold_test_missing_name_fails() {
+    let (_stdout, _stderr, status) = run_scaffold(&["test", "--source", "s"]);
+    assert!(!status.success());
+}
+
+// --- scaffold: output does not include cell_id ---
+
+#[test]
+fn scaffold_output_has_no_cell_id() {
+    let (stdout, _stderr, _) = run_scaffold(&["fixture", "--name", "f1"]);
+    let val: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        val.get("cell_id").is_none(),
+        "scaffold should not include cell_id"
+    );
+}
+
+// --- diagnostics: all fields present ---
+
+#[test]
+fn update_diagnostics_have_all_fields() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({"cell_id": "nonexistent"});
+    let (_stdout, stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(!status.success());
+    let diag: serde_json::Value = serde_json::from_str(&stderr).expect("valid JSON");
+    let d = &diag["diagnostics"][0];
+    assert!(d.get("type").is_some(), "diagnostic should have 'type'");
+    assert!(
+        d.get("severity").is_some(),
+        "diagnostic should have 'severity'"
+    );
+    assert!(
+        d.get("message").is_some(),
+        "diagnostic should have 'message'"
+    );
+    assert!(d.get("field").is_some(), "diagnostic should have 'field'");
+}
+
+// --- diagnostics: stdout empty on validation failure ---
+
+#[test]
+fn update_validation_failure_stdout_empty() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let data = serde_json::json!({"cell_id": "nonexistent"});
+    let (stdout, _stderr, status) = run_update(&source_path, &["--data", &data.to_string()]);
+    assert!(!status.success());
+    assert!(
+        stdout.trim().is_empty(),
+        "stdout should be empty on validation failure"
+    );
+}
