@@ -156,6 +156,7 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
 
 /// Recompute and store the SHA snapshot for a single cell at `cell_index`.
 /// Only stamps the cell if it has nota-bene metadata.
+#[allow(dead_code)]
 pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
     let snapshot = compute_snapshot(nb);
     let cell = &mut nb.cells[cell_index];

@@ -1,4 +1,4 @@
-.PHONY: help build clean fmt setup-sample-project e2e-opencode \
+.PHONY: help build clean lint setup-sample-project e2e-opencode \
         nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build \
         test-setup test clean-venv
 
@@ -13,7 +13,7 @@ help:
 	@echo ""
 	@echo "  make build              Build debug CLI (target/debug/nota-bene)"
 	@echo "  make clean              Remove target/ and sample-project/"
-	@echo "  make fmt                Check code format (cargo fmt -- --check)"
+	@echo "  make lint               Check format (cargo fmt) and run clippy (deny warnings)"
 	@echo "  make setup-sample-project  Create sample-project with opencode.json and nota-bene symlink"
 	@echo "  make e2e-opencode        Run functional tests with OpenCode as the tool"
 	@echo ""
@@ -53,6 +53,11 @@ clean:
 
 fmt:
 	cargo fmt -- --check
+
+clippy:
+	cargo clippy -- -D warnings
+
+lint: fmt clippy
 
 setup-sample-project: build
 	@mkdir -p sample-project

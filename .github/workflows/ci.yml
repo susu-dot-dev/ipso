@@ -15,7 +15,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -25,8 +25,8 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Check format
-        run: make fmt
+      - name: Lint
+        run: make lint
 
       - name: Install OpenCode
         run: curl -fsSL https://opencode.ai/install | bash
