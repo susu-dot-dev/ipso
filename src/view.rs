@@ -235,4 +235,41 @@ mod tests {
         let fields = parse_fields("cell_id, source , test");
         assert_eq!(fields, vec!["cell_id", "source", "test"]);
     }
+
+    // --- CellView::from_cell with various metadata ---
+
+    #[test]
+    fn from_cell_with_fixtures_includes_fixtures() {
+        let cell = cell_with_nb(
+            "c1",
+            "x = 1",
+            json!({"fixtures": {"f1": {"description": "d", "priority": 1, "source": "s"}}}),
+        );
+        let nb = notebook(vec![cell]);
+        let view = CellView::from_cell(&nb, 0);
+        let fixtures = view.fixtures.unwrap();
+        assert!(fixtures.contains_key("f1"));
+        assert_eq!(fixtures["f1"].description, "d");
+    }
+
+    #[test]
+    fn from_cell_with_diff_includes_diff() {
+        let cell = cell_with_nb("c1", "x = 1", json!({"diff": "some diff"}));
+        let nb = notebook(vec![cell]);
+        let view = CellView::from_cell(&nb, 0);
+        assert_eq!(view.diff.unwrap(), "some diff");
+    }
+
+    #[test]
+    fn from_cell_with_nb_no_shas_has_missing_sha_diagnostic() {
+        let cell = cell_with_nb("c1", "x = 1", json!({}));
+        let nb = notebook(vec![cell]);
+        let view = CellView::from_cell(&nb, 0);
+        assert!(!view.status.valid);
+        assert!(view
+            .status
+            .diagnostics
+            .iter()
+            .any(|d| { d.r#type == crate::diagnostics::DiagnosticType::MissingSha }));
+    }
 }

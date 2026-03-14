@@ -76,11 +76,13 @@ Additional `--filter` flags narrow which cells are considered before the
 Recompute and store the SHA snapshot for cells, marking them as up-to-date.
 
 ```
-nb accept <path> [--stdin] [--filter "key:expr"...]
+nb accept <path> [--stdin] (--all | --filter "key:expr"...)
 ```
 
-- Without any filter: accepts all cells.
+- `--all`: accepts all cells. Required when no `--filter` is given.
 - With filters: accepts only matching cells.
+- One of `--all` or at least one `--filter` is required. This prevents
+  accidentally accepting every cell when a filter was intended but forgotten.
 - In `--stdin` mode: writes the updated notebook to stdout.
 - In file mode: writes back to the file in place.
 
@@ -90,11 +92,15 @@ Generate a well-formed JSON fragment for use with `nb update`. Useful as a
 starting point when constructing update blobs programmatically.
 
 ```
-nb scaffold fixture --name <name> --description <desc> --priority <n> --source <src>
-nb scaffold test --name <name> --source <src>
+nb scaffold fixture --name <name> [--description <desc>] [--priority <n>] [--source <src>]
+nb scaffold test --name <name> [--source <src>]
 ```
 
 Outputs a JSON fragment to stdout. Does not read or write any notebook file.
+
+`--name` is required. All other flags default to sensible zero-values
+(`""` for strings, `0` for priority) so callers can scaffold quickly and
+fill in details later.
 
 Example:
 

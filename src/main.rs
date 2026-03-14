@@ -7,6 +7,7 @@ mod metadata;
 mod notebook;
 mod save;
 mod shas;
+mod update;
 mod view;
 
 use anyhow::{bail, Context, Result};
@@ -79,6 +80,79 @@ enum Command {
         #[arg(long)]
         fields: Option<String>,
     },
+    /// Apply a JSON blob of changes to one or more cells.
+    Update {
+        /// Path to the source .ipynb file.
+        path: PathBuf,
+        /// Read the notebook from stdin instead of the file.
+        #[arg(long)]
+        stdin: bool,
+        /// Inline JSON string with update data (single object or array).
+        #[arg(long)]
+        data: Option<String>,
+        /// Path to a JSON file with update data (single object or array).
+        #[arg(long = "data-file")]
+        data_file: Option<PathBuf>,
+    },
+    /// Show invalid cells and exit non-zero if any exist.
+    ///
+    /// Alias for `nb view` with `--filter "status.valid:false" --fields cell_id,status`,
+    /// plus a non-zero exit code when any cells are returned.
+    Status {
+        /// Path to the source .ipynb file.
+        path: PathBuf,
+        /// Read the notebook from stdin instead of the file.
+        #[arg(long)]
+        stdin: bool,
+        /// Additional filters applied before the status.valid:false check.
+        #[arg(long = "filter", verbatim_doc_comment)]
+        filters: Vec<String>,
+    },
+    /// Recompute and store SHA snapshots, marking cells as up-to-date.
+    Accept {
+        /// Path to the source .ipynb file.
+        path: PathBuf,
+        /// Read the notebook from stdin instead of the file.
+        #[arg(long)]
+        stdin: bool,
+        /// Accept all cells. Required when no --filter is given.
+        #[arg(long)]
+        all: bool,
+        /// Filter which cells to accept.
+        #[arg(long = "filter", verbatim_doc_comment)]
+        filters: Vec<String>,
+    },
+    /// Generate a well-formed JSON fragment for use with `nb update`.
+    #[command(subcommand)]
+    Scaffold(ScaffoldCommand),
+}
+
+#[derive(clap::Subcommand)]
+enum ScaffoldCommand {
+    /// Scaffold a fixture JSON fragment.
+    Fixture {
+        /// Fixture name.
+        #[arg(long)]
+        name: String,
+        /// Fixture description.
+        #[arg(long, default_value = "")]
+        description: String,
+        /// Fixture priority.
+        #[arg(long, default_value_t = 0)]
+        priority: i64,
+        /// Fixture source code.
+        #[arg(long, default_value = "")]
+        source: String,
+    },
+    /// Scaffold a test JSON fragment.
+    Test {
+        /// Test name.
+        #[arg(long)]
+        name: String,
+        /// Test source code.
+        #[arg(long, default_value = "")]
+        source: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -109,6 +183,24 @@ fn main() -> Result<()> {
             filters,
             fields,
         }) => run_view(path, stdin, filters, fields),
+        Some(Command::Update {
+            path,
+            stdin,
+            data,
+            data_file,
+        }) => run_update(path, stdin, data, data_file),
+        Some(Command::Status {
+            path,
+            stdin,
+            filters,
+        }) => run_status(path, stdin, filters),
+        Some(Command::Accept {
+            path,
+            stdin,
+            all,
+            filters,
+        }) => run_accept(path, stdin, all, filters),
+        Some(Command::Scaffold(cmd)) => run_scaffold(cmd),
     }
 }
 
@@ -273,5 +365,219 @@ fn run_view(
 
     let json = serde_json::to_string_pretty(&results).context("serializing output")?;
     println!("{json}");
+    Ok(())
+}
+
+/// `nota-bene update <path>`: apply JSON changes to cells.
+fn run_update(
+    path: PathBuf,
+    stdin: bool,
+    data: Option<String>,
+    data_file: Option<PathBuf>,
+) -> Result<()> {
+    let json_str = match (&data, &data_file) {
+        (Some(d), None) => d.clone(),
+        (None, Some(f)) => std::fs::read_to_string(f)
+            .with_context(|| format!("reading data file {}", f.display()))?,
+        (Some(_), Some(_)) => bail!("cannot pass both --data and --data-file"),
+        (None, None) => bail!("one of --data or --data-file is required"),
+    };
+
+    let updates = update::parse_updates(&json_str)?;
+
+    // Load notebook
+    let (mut nb, from_stdin) = if stdin {
+        use std::io::Read;
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading notebook from stdin")?;
+        let hint = path.display().to_string();
+        let nb = load_notebook_from_str(&content, &hint)
+            .with_context(|| format!("parsing notebook from stdin (path hint: {hint})"))?;
+        (nb, true)
+    } else {
+        let nb =
+            load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?;
+        (nb, false)
+    };
+
+    // Validate all updates against the notebook, collecting diagnostics
+    let errors = update::validate_updates(&updates, &nb);
+    if !errors.is_empty() {
+        let diag_json = serde_json::to_string_pretty(&serde_json::json!({
+            "valid": false,
+            "diagnostics": errors,
+        }))
+        .context("serializing diagnostics")?;
+        eprintln!("{diag_json}");
+        std::process::exit(1);
+    }
+
+    // Apply updates
+    update::apply_updates(updates, &mut nb)?;
+
+    // Write back
+    if from_stdin {
+        let json = nbformat::serialize_notebook(&nbformat::Notebook::V4(nb))
+            .context("serializing notebook")?;
+        print!("{json}");
+    } else {
+        save_notebook(&nb, &path)
+            .with_context(|| format!("writing notebook to {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+/// `nota-bene status <path>`: show invalid cells and exit non-zero if any.
+fn run_status(path: PathBuf, stdin: bool, raw_filters: Vec<String>) -> Result<()> {
+    let nb = if stdin {
+        use std::io::Read;
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading notebook from stdin")?;
+        let hint = path.display().to_string();
+        load_notebook_from_str(&content, &hint)
+            .with_context(|| format!("parsing notebook from stdin (path hint: {hint})"))?
+    } else {
+        load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?
+    };
+
+    let mut filters: Vec<filter::Filter> = raw_filters
+        .iter()
+        .map(|s| filter::Filter::parse(s))
+        .collect::<Result<_>>()?;
+
+    // Add the implicit status.valid:false filter
+    filters.push(filter::Filter::parse("status.valid:false")?);
+
+    let fields = Some(view::parse_fields("cell_id,status"));
+
+    let results: Vec<serde_json::Value> = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
+                return None;
+            }
+            if filter::cell_matches_all(&filters, &nb, cell, i) {
+                let cv = view::CellView::from_cell(&nb, i);
+                Some(cv.to_json_value(&fields))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let json = serde_json::to_string_pretty(&results).context("serializing output")?;
+    println!("{json}");
+
+    if !results.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// `nota-bene accept <path>`: recompute SHAs for matching cells.
+fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -> Result<()> {
+    if !all && raw_filters.is_empty() {
+        bail!("one of --all or at least one --filter is required for `accept`");
+    }
+    if all && !raw_filters.is_empty() {
+        bail!("--all and --filter are mutually exclusive for `accept`");
+    }
+
+    let (mut nb, from_stdin) = if stdin {
+        use std::io::Read;
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading notebook from stdin")?;
+        let hint = path.display().to_string();
+        let nb = load_notebook_from_str(&content, &hint)
+            .with_context(|| format!("parsing notebook from stdin (path hint: {hint})"))?;
+        (nb, true)
+    } else {
+        let nb =
+            load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?;
+        (nb, false)
+    };
+
+    let filters: Vec<filter::Filter> = raw_filters
+        .iter()
+        .map(|s| filter::Filter::parse(s))
+        .collect::<Result<_>>()?;
+
+    // Collect indices of cells to accept
+    let indices: Vec<usize> = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
+                return None;
+            }
+            // Skip cells without nota-bene metadata
+            cell.nota_bene()?;
+            if all || filter::cell_matches_all(&filters, &nb, cell, i) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for idx in indices {
+        shas::accept_cell(&mut nb, idx);
+    }
+
+    // Write back
+    if from_stdin {
+        let json = nbformat::serialize_notebook(&nbformat::Notebook::V4(nb))
+            .context("serializing notebook")?;
+        print!("{json}");
+    } else {
+        save_notebook(&nb, &path)
+            .with_context(|| format!("writing notebook to {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+/// `nota-bene scaffold fixture|test`: generate JSON fragments.
+fn run_scaffold(cmd: ScaffoldCommand) -> Result<()> {
+    let json = match cmd {
+        ScaffoldCommand::Fixture {
+            name,
+            description,
+            priority,
+            source,
+        } => {
+            serde_json::json!({
+                "fixtures": {
+                    name: {
+                        "description": description,
+                        "priority": priority,
+                        "source": source,
+                    }
+                }
+            })
+        }
+        ScaffoldCommand::Test { name, source } => {
+            serde_json::json!({
+                "test": {
+                    "name": name,
+                    "source": source,
+                }
+            })
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).context("serializing scaffold")?
+    );
     Ok(())
 }
