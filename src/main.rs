@@ -2,6 +2,7 @@ mod diagnostics;
 mod diff_utils;
 mod edit;
 mod filter;
+pub mod json_path;
 mod mcp;
 mod metadata;
 mod notebook;
