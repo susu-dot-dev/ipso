@@ -1,9 +1,6 @@
-.PHONY: help build clean lint \
-        nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build \
-        pnb-sync pnb-sync-locked pnb-test pnb-lint pnb-format pnb-fix pnb-typing pnb-all pnb-build \
-        test-setup test clean-venv
+.PHONY: help build clean lint test test-setup clean-venv
 
-VENV := tests/.venv
+VENV   := tests/.venv
 PYTHON := $(VENV)/bin/python
 PIP    := $(VENV)/bin/pip
 
@@ -12,34 +9,14 @@ PIP    := $(VENV)/bin/pip
 help:
 	@echo "nota-bene Makefile targets:"
 	@echo ""
-	@echo "  make build              Build debug CLI (target/debug/nota-bene)"
-	@echo "  make clean              Remove target/"
-	@echo "  make lint               Check format (cargo fmt) and run clippy (deny warnings)"
-	@echo "  make test               Set up test venv and run cargo test"
+	@echo "  make build      Build debug CLI (target/debug/nota-bene)"
+	@echo "  make clean      Remove target/"
+	@echo "  make lint       cargo fmt check + clippy"
+	@echo "  make test       Run Rust integration tests"
 	@echo ""
-	@echo "  Python package (nota-bene/):"
-	@echo "  make nb-sync            Sync Python dev + lint deps"
-	@echo "  make nb-sync-locked     Sync Python deps from lockfile"
-	@echo "  make nb-test            Run Python tests"
-	@echo "  make nb-lint            Run ruff check"
-	@echo "  make nb-format          Run ruff format check (dry-run)"
-	@echo "  make nb-fix             Auto-fix lint + format in place"
-	@echo "  make nb-typing          Run mypy"
-	@echo "  make nb-all             lint + format + typing"
-	@echo "  make nb-build           Build Python wheel and sdist
+	@echo "  Python packages: run 'make <target>' inside nota-bene/ or pytest-nota-bene/"
 	@echo ""
-	@echo "  Python package (pytest-nota-bene/):"
-	@echo "  make pnb-sync           Sync Python dev + lint deps"
-	@echo "  make pnb-sync-locked    Sync Python deps from lockfile"
-	@echo "  make pnb-test           Run Python tests"
-	@echo "  make pnb-lint           Run ruff check"
-	@echo "  make pnb-format         Run ruff format check (dry-run)"
-	@echo "  make pnb-fix            Auto-fix lint + format in place"
-	@echo "  make pnb-typing         Run mypy"
-	@echo "  make pnb-all            lint + format + typing"
-	@echo "  make pnb-build          Build Python wheel and sdist""
-	@echo ""
-	@echo "  make help               Show this help"
+	@echo "  make help       Show this help"
 
 # ---- Rust integration test environment -------------------------------------
 
@@ -47,7 +24,6 @@ $(PYTHON):
 	python3 -m venv $(VENV)
 
 test-setup: $(PYTHON)
-	$(PIP) install --quiet nbclient ipykernel ipython
 	$(PIP) install --quiet -e nota-bene/
 
 test: test-setup
@@ -56,7 +32,7 @@ test: test-setup
 clean-venv:
 	rm -rf $(VENV)
 
-# ---- Rust build / format ---------------------------------------------------
+# ---- Rust build / lint -----------------------------------------------------
 
 build:
 	cargo build
@@ -71,61 +47,3 @@ clippy:
 	cargo clippy -- -D warnings
 
 lint: fmt clippy
-
-# ---- Python sub-package (nota-bene/) ---------------------------------------
-
-nb-sync:
-	$(MAKE) -C nota-bene sync
-
-nb-sync-locked:
-	$(MAKE) -C nota-bene sync-locked
-
-nb-test:
-	$(MAKE) -C nota-bene test
-
-nb-lint:
-	$(MAKE) -C nota-bene lint
-
-nb-format:
-	$(MAKE) -C nota-bene format
-
-nb-fix:
-	$(MAKE) -C nota-bene fix
-
-nb-typing:
-	$(MAKE) -C nota-bene typing
-
-nb-all:
-	$(MAKE) -C nota-bene all
-
-nb-build:
-	$(MAKE) -C nota-bene build
-
-# ---- Python sub-package (pytest-nota-bene/) ---------------------------------
-
-pnb-sync:
-	$(MAKE) -C pytest-nota-bene sync
-
-pnb-sync-locked:
-	$(MAKE) -C pytest-nota-bene sync-locked
-
-pnb-test:
-	$(MAKE) -C pytest-nota-bene test
-
-pnb-lint:
-	$(MAKE) -C pytest-nota-bene lint
-
-pnb-format:
-	$(MAKE) -C pytest-nota-bene format
-
-pnb-fix:
-	$(MAKE) -C pytest-nota-bene fix
-
-pnb-typing:
-	$(MAKE) -C pytest-nota-bene typing
-
-pnb-all:
-	$(MAKE) -C pytest-nota-bene all
-
-pnb-build:
-	$(MAKE) -C pytest-nota-bene build

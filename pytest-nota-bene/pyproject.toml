@@ -20,11 +20,14 @@ build-backend = "uv_build"
 source-exclude = ["tests/**"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-cov>=4.1.0"]
+dev = ["pytest", "pytest-cov>=4.1.0", "nota-bene"]
 lint = ["ruff>=0.12.9", "mypy>=1.0.0"]
 
 [tool.uv]
 default-groups = ["dev", "lint"]
+
+[tool.uv.sources]
+nota-bene = { path = "../nota-bene", editable = true }
 
 [tool.ruff]
 exclude = [".venv"]
