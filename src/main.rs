@@ -3,6 +3,7 @@ mod diff_utils;
 mod edit;
 mod filter;
 pub mod json_path;
+mod lsp;
 mod mcp;
 mod metadata;
 mod notebook;
@@ -28,6 +29,8 @@ struct Cli {
 enum Command {
     /// Start the MCP server (stdio transport).
     Mcp,
+    /// Start the LSP server (stdio transport).
+    Lsp,
     /// Open a notebook in test-editor mode.
     Edit {
         /// Path to the source .ipynb file.
@@ -163,6 +166,11 @@ fn main() -> Result<()> {
         Some(Command::Mcp) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(mcp::run()).map_err(|e| anyhow::anyhow!(e))
+        }
+        Some(Command::Lsp) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(lsp::run_server());
+            Ok(())
         }
         Some(Command::Edit {
             path,

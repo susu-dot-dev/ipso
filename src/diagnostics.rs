@@ -58,20 +58,48 @@ pub struct CellStatus {
 }
 
 // ---------------------------------------------------------------------------
-// compute_cell_diagnostics
+// compute_own_diagnostics / compute_state_diagnostics / compute_cell_diagnostics
 // ---------------------------------------------------------------------------
 
-/// Compute diagnostics for the cell at `cell_index` in `nb`.
+/// Compute diagnostics that depend only on the cell's own content.
 ///
-/// - `CellState::Missing` → `missing` error (code cell never configured or never accepted)
-/// - `CellState::Changed` → `needs_review` warnings for own-content changes,
-///   `ancestor_modified` warnings for preceding-cell changes
-/// - If cell has a diff, checks whether it applies cleanly; if not → `diff_conflict` error
-pub fn compute_cell_diagnostics(nb: &nbformat::v4::Notebook, cell_index: usize) -> CellStatus {
+/// Currently this checks:
+/// - Whether the cell's diff (if present) applies cleanly → `DiffConflict`
+///
+/// The result is determined entirely by the cell's source and metadata, so it
+/// is safe to cache keyed by the cell's SHA.
+pub fn compute_own_diagnostics(cell: &nbformat::v4::Cell) -> Vec<Diagnostic> {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    let cell = &nb.cells[cell_index];
+    if let Some(data) = cell.nota_bene() {
+        if let Some(diff) = &data.diff {
+            let source = cell.source_str();
+            if apply_diff(&source, diff).is_err() {
+                diagnostics.push(Diagnostic {
+                    r#type: DiagnosticType::DiffConflict,
+                    severity: Severity::Error,
+                    message: "diff does not apply cleanly to the current source. Regenerate the diff or update the source to match.".to_string(),
+                    field: "diff".to_string(),
+                });
+            }
+        }
+    }
+    diagnostics
+}
 
-    // Cell state checks.
+/// Compute diagnostics that depend on the cell's position within the notebook
+/// (cross-cell state checks).
+///
+/// This calls `cell_state` and maps:
+/// - `CellState::Missing` → `Missing` error
+/// - `CellState::Changed` → `NeedsReview` / `AncestorModified` warnings
+///
+/// Must always be called fresh — never cached — because the result depends on
+/// other cells.
+pub fn compute_state_diagnostics(
+    nb: &nbformat::v4::Notebook,
+    cell_index: usize,
+) -> Vec<Diagnostic> {
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     match cell_state(nb, cell_index) {
         CellState::Valid => {}
         CellState::Missing => {
@@ -101,22 +129,19 @@ pub fn compute_cell_diagnostics(nb: &nbformat::v4::Notebook, cell_index: usize) 
             }
         }
     }
+    diagnostics
+}
 
-    // Diff conflict check.
-    if let Some(data) = cell.nota_bene() {
-        if let Some(diff) = &data.diff {
-            let source = cell.source_str();
-            if apply_diff(&source, diff).is_err() {
-                diagnostics.push(Diagnostic {
-                    r#type: DiagnosticType::DiffConflict,
-                    severity: Severity::Error,
-                    message: "diff does not apply cleanly to the current source. Regenerate the diff or update the source to match.".to_string(),
-                    field: "diff".to_string(),
-                });
-            }
-        }
-    }
-
+/// Compute diagnostics for the cell at `cell_index` in `nb`.
+///
+/// - `CellState::Missing` → `missing` error (code cell never configured or never accepted)
+/// - `CellState::Changed` → `needs_review` warnings for own-content changes,
+///   `ancestor_modified` warnings for preceding-cell changes
+/// - If cell has a diff, checks whether it applies cleanly; if not → `diff_conflict` error
+pub fn compute_cell_diagnostics(nb: &nbformat::v4::Notebook, cell_index: usize) -> CellStatus {
+    let cell = &nb.cells[cell_index];
+    let mut diagnostics = compute_state_diagnostics(nb, cell_index);
+    diagnostics.extend(compute_own_diagnostics(cell));
     let valid = diagnostics.is_empty();
     CellStatus { valid, diagnostics }
 }
@@ -583,5 +608,79 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.r#type == DiagnosticType::DiffConflict));
+    }
+
+    // ---------------------------------------------------------------------------
+    // compute_own_diagnostics / compute_state_diagnostics
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn own_diagnostics_diff_conflict() {
+        let diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old line\n+new line\n".to_string();
+        let cell = cell_with_diff_no_shas("c1", "completely different", &diff);
+        let diags = compute_own_diagnostics(&cell);
+        assert!(diags
+            .iter()
+            .any(|d| d.r#type == DiagnosticType::DiffConflict));
+    }
+
+    #[test]
+    fn own_diagnostics_clean_diff() {
+        let original = "x = 1\n";
+        let patched = "x = 99\n";
+        let diff = crate::diff_utils::compute_diff(original, patched).unwrap();
+        let mut meta = blank_cell_metadata();
+        meta.additional
+            .insert("nota-bene".to_string(), json!({ "diff": diff }));
+        let cell = Cell::Code {
+            id: cid("c1"),
+            metadata: meta,
+            execution_count: None,
+            source: vec![original.to_string()],
+            outputs: vec![],
+        };
+        let diags = compute_own_diagnostics(&cell);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn own_diagnostics_no_metadata() {
+        let cell = plain_cell("c1", "x = 1");
+        let diags = compute_own_diagnostics(&cell);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn state_diagnostics_missing() {
+        let nb = notebook(vec![plain_cell("c1", "x = 1")]);
+        let diags = compute_state_diagnostics(&nb, 0);
+        assert!(diags.iter().any(|d| d.r#type == DiagnosticType::Missing));
+    }
+
+    #[test]
+    fn state_diagnostics_valid() {
+        let c1_plain = plain_cell("c1", "x = 1");
+        let shas = json!([sha_json(&c1_plain)]);
+        let c1 = cell_with_shas("c1", "x = 1", shas);
+        let nb = notebook(vec![c1]);
+        let diags = compute_state_diagnostics(&nb, 0);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn state_diagnostics_both_buckets() {
+        let c1_old = plain_cell("c1", "x = 1");
+        let c2_old = plain_cell("c2", "y = 2");
+        let shas = json!([sha_json(&c1_old), sha_json(&c2_old)]);
+        let c1 = plain_cell("c1", "x = 999");
+        let c2 = cell_with_shas("c2", "y = 999", shas);
+        let nb = notebook(vec![c1, c2]);
+        let diags = compute_state_diagnostics(&nb, 1);
+        assert!(diags
+            .iter()
+            .any(|d| d.r#type == DiagnosticType::NeedsReview));
+        assert!(diags
+            .iter()
+            .any(|d| d.r#type == DiagnosticType::AncestorModified));
     }
 }

@@ -191,7 +191,7 @@ mod tests {
     use super::*;
     use crate::notebook::blank_cell_metadata;
     use crate::shas::compute_cell_sha;
-    use nbformat::v4::{Cell, CellId, Metadata, Notebook};
+    use nbformat::v4::{Cell, CellId, Notebook};
     use serde_json::json;
 
     fn cid(s: &str) -> CellId {
