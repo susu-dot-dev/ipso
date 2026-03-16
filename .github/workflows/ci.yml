@@ -85,6 +85,64 @@ jobs:
       - name: Lint, format, and type-check
         run: make all
 
+  pytest-nota-bene-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pytest-nota-bene
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pytest-nota-bene/.python-version
+
+      - name: Install dependencies
+        run: make sync-locked
+
+      - name: Run tests
+        run: make test
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-nota-bene-coverage
+          path: |
+            pytest-nota-bene/coverage.xml
+            pytest-nota-bene/htmlcov/
+
+  pytest-nota-bene-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pytest-nota-bene
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pytest-nota-bene/.python-version
+
+      - name: Install dependencies
+        run: make sync-locked
+
+      - name: Lint, format, and type-check
+        run: make all
+
   coverage-comment:
     needs: python-test
     runs-on: ubuntu-latest

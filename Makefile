@@ -1,5 +1,6 @@
 .PHONY: help build clean lint \
         nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build \
+        pnb-sync pnb-sync-locked pnb-test pnb-lint pnb-format pnb-fix pnb-typing pnb-all pnb-build \
         test-setup test clean-venv
 
 VENV := tests/.venv
@@ -25,7 +26,18 @@ help:
 	@echo "  make nb-fix             Auto-fix lint + format in place"
 	@echo "  make nb-typing          Run mypy"
 	@echo "  make nb-all             lint + format + typing"
-	@echo "  make nb-build           Build Python wheel and sdist"
+	@echo "  make nb-build           Build Python wheel and sdist
+	@echo ""
+	@echo "  Python package (pytest-nota-bene/):"
+	@echo "  make pnb-sync           Sync Python dev + lint deps"
+	@echo "  make pnb-sync-locked    Sync Python deps from lockfile"
+	@echo "  make pnb-test           Run Python tests"
+	@echo "  make pnb-lint           Run ruff check"
+	@echo "  make pnb-format         Run ruff format check (dry-run)"
+	@echo "  make pnb-fix            Auto-fix lint + format in place"
+	@echo "  make pnb-typing         Run mypy"
+	@echo "  make pnb-all            lint + format + typing"
+	@echo "  make pnb-build          Build Python wheel and sdist""
 	@echo ""
 	@echo "  make help               Show this help"
 
@@ -88,3 +100,32 @@ nb-all:
 
 nb-build:
 	$(MAKE) -C nota-bene build
+
+# ---- Python sub-package (pytest-nota-bene/) ---------------------------------
+
+pnb-sync:
+	$(MAKE) -C pytest-nota-bene sync
+
+pnb-sync-locked:
+	$(MAKE) -C pytest-nota-bene sync-locked
+
+pnb-test:
+	$(MAKE) -C pytest-nota-bene test
+
+pnb-lint:
+	$(MAKE) -C pytest-nota-bene lint
+
+pnb-format:
+	$(MAKE) -C pytest-nota-bene format
+
+pnb-fix:
+	$(MAKE) -C pytest-nota-bene fix
+
+pnb-typing:
+	$(MAKE) -C pytest-nota-bene typing
+
+pnb-all:
+	$(MAKE) -C pytest-nota-bene all
+
+pnb-build:
+	$(MAKE) -C pytest-nota-bene build
