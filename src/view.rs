@@ -1,7 +1,7 @@
 /// `nb view` output types and serialization.
 ///
 /// A [`CellView`] is the JSON representation of a single code cell as exposed
-/// by `nb view`.  The spec says `shas` are never surfaced; instead staleness
+/// by `nb view`.  The spec says `shas` are never surfaced; instead cell state
 /// information appears in `status.diagnostics`.
 use std::collections::HashSet;
 
@@ -22,7 +22,7 @@ use crate::notebook::CellExt;
 /// JSON representation of a single code cell (view output).
 ///
 /// Fields match the spec's "Cell object" schema.  `shas` is intentionally
-/// absent — staleness is surfaced through `status`.
+/// absent — cell state is surfaced through `status`.
 #[derive(Debug, Serialize)]
 pub struct CellView {
     pub cell_id: String,
@@ -136,7 +136,9 @@ mod tests {
     // --- CellView::from_cell ---
 
     #[test]
-    fn from_plain_cell_has_no_fixtures_diff_test() {
+    fn from_plain_cell_has_no_fixtures_diff_test_and_is_missing() {
+        // Plain code cells now produce a Missing diagnostic (bug fix: they must
+        // be configured before they can be considered valid).
         let cell = plain_cell("c1", "x = 1");
         let nb = notebook(vec![cell]);
         let view = CellView::from_cell(&nb, 0);
@@ -145,7 +147,12 @@ mod tests {
         assert!(view.fixtures.is_none());
         assert!(view.diff.is_none());
         assert!(view.test.is_none());
-        assert!(view.status.valid);
+        assert!(!view.status.valid);
+        assert!(view
+            .status
+            .diagnostics
+            .iter()
+            .any(|d| d.r#type == crate::diagnostics::DiagnosticType::Missing));
     }
 
     #[test]
@@ -270,6 +277,6 @@ mod tests {
             .status
             .diagnostics
             .iter()
-            .any(|d| { d.r#type == crate::diagnostics::DiagnosticType::MissingSha }));
+            .any(|d| { d.r#type == crate::diagnostics::DiagnosticType::Missing }));
     }
 }

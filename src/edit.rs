@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::diff_utils::{apply_diff, reconstruct_original};
 use crate::metadata::{Fixture, NotaBeneData};
 use crate::notebook::{blank_cell_metadata, new_cell_id, CellExt};
-use crate::shas::{compute_snapshot, staleness, Staleness};
+use crate::shas::{cell_state, compute_snapshot, CellState};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -36,8 +36,8 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
                         cells.push(make_source_cell_passthrough(cell));
                     }
                     Some(data) => {
-                        let stale = staleness(source, idx);
-                        cells.push(make_section_header_with_meta(cell, cell_pos, data, &stale)?);
+                        let state = cell_state(source, idx);
+                        cells.push(make_section_header_with_meta(cell, cell_pos, data, &state)?);
 
                         // Fixture cells — or a stub if none exist
                         if let Some(fixtures) = &data.fixtures {
@@ -145,23 +145,27 @@ fn make_section_header_with_meta(
     cell: &Cell,
     pos: usize,
     data: &NotaBeneData,
-    stale: &Staleness,
+    state: &CellState,
 ) -> Result<Cell> {
     let cell_id = cell.cell_id_str();
 
-    let (status_str, reasons) = match stale {
-        Staleness::Valid => ("Has tests", vec![]),
-        Staleness::NotImplemented => (
+    let (status_str, reasons) = match state {
+        CellState::Valid => ("Has tests", vec![]),
+        CellState::Missing => (
             "Needs review",
-            vec!["No staleness data (shas missing)".to_string()],
+            vec!["This cell has no tests or fixtures yet. Add them in the cells below, then run `nota-bene edit --continue` to save.".to_string()],
         ),
-        Staleness::OutOfDate(reasons) => ("Needs review", reasons.clone()),
+        CellState::Changed(result) => {
+            let mut all_reasons = result.needs_review.clone();
+            all_reasons.extend(result.ancestor_modified.clone());
+            ("Needs review", all_reasons)
+        }
     };
 
-    let action_hint = match stale {
-        Staleness::Valid => "Tests are up to date. Edit the source or test cells below, then run `nota-bene edit --continue <notebook>`.",
-        Staleness::NotImplemented => "Tests exist but have never been validated against the current source (no SHA recorded yet). Review the test cell below, then run `nota-bene edit --continue <notebook>` to lock in the current state.",
-        Staleness::OutOfDate(_) => "The source has changed since these tests were saved. Review and update the test cell below, then run `nota-bene edit --continue <notebook>`.",
+    let action_hint = match state {
+        CellState::Valid => "Tests are up to date. Edit the source or test cells below, then run `nota-bene edit --continue <notebook>`.",
+        CellState::Missing => "Tests exist but have never been validated against the current source (no SHA recorded yet). Review the test cell below, then run `nota-bene edit --continue <notebook>` to lock in the current state.",
+        CellState::Changed(_) => "The source has changed since these tests were saved. Review and update the test cell below, then run `nota-bene edit --continue <notebook>`.",
     };
 
     let mut parts = vec![format!(
@@ -663,7 +667,7 @@ mod tests {
     #[test]
     fn section_header_valid_with_explicit_null_diff_omits_original_source() {
         let mut meta = blank_cell_metadata();
-        // shas must be present so staleness() returns Valid, not NotImplemented.
+        // shas must be present so cell_state() returns Valid, not Missing.
         // Use an empty shas list for simplicity (no preceding cells to check).
         meta.additional.insert(
             "nota-bene".to_string(),
@@ -726,15 +730,15 @@ mod tests {
         );
     }
 
-    /// A stale cell with no diff should NOT include the original source section.
+    /// A changed cell with no diff should NOT include the original source section.
     #[test]
     fn section_header_out_of_date_without_diff_omits_original_source() {
-        // Cell has nota-bene metadata with shas (triggering staleness check),
+        // Cell has nota-bene metadata with shas (triggering cell_state check),
         // but no diff. The section header should not contain "Original source".
         let c1_old = plain_cell_for_staleness("c1", "x = 1");
         let c2_meta = {
             let mut meta = blank_cell_metadata();
-            // shas that record c1 as "x = 1" but c1 is now "x = 999" → OutOfDate
+            // shas that record c1 as "x = 1" but c1 is now "x = 999" → Changed
             let shas = serde_json::json!([
                 {"cell_id": "c1", "sha": crate::shas::compute_cell_sha(&c1_old)},
             ]);
@@ -742,7 +746,7 @@ mod tests {
                 .insert("nota-bene".to_string(), serde_json::json!({ "shas": shas }));
             meta
         };
-        // Now c1 is different to trigger OutOfDate
+        // Now c1 is different to trigger Changed
         let c1_changed = plain_cell_for_staleness("c1", "x = 999");
         let c2 = Cell::Code {
             id: cid("c2"),
