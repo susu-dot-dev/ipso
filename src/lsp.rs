@@ -11,6 +11,7 @@ use crate::diagnostics::{
     compute_own_diagnostics, compute_state_diagnostics, Diagnostic, Severity,
 };
 use crate::json_path::{jpath, json_path_range, LineIndex};
+use crate::notebook::CellExt;
 use crate::shas::compute_cell_sha;
 
 struct LspBackend {
@@ -28,7 +29,7 @@ impl LanguageServer for LspBackend {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        change: None,
+                        change: Some(TextDocumentSyncKind::FULL),
                         save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
                             include_text: Some(true),
                         })),
@@ -45,6 +46,23 @@ impl LanguageServer for LspBackend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
+        // Ask the editor to notify us when .ipynb files change on disk
+        // (e.g. after `nb accept` modifies the file externally).
+        let registration = Registration {
+            id: "nb-ipynb-watcher".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(
+                serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                    watchers: vec![FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/*.ipynb".to_string()),
+                        kind: Some(WatchKind::Change),
+                    }],
+                })
+                .unwrap(),
+            ),
+        };
+        if let Err(_e) = self.client.register_capability(vec![registration]).await {}
+
         self.client
             .log_message(MessageType::INFO, "nota-bene LSP ready")
             .await;
@@ -55,40 +73,63 @@ impl LanguageServer for LspBackend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.analyze(params.text_document.uri, params.text_document.text)
-            .await;
+        let uri = params.text_document.uri.clone();
+        let text = params.text_document.text.clone();
+        self.analyze(uri, text).await;
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri.clone();
+        let text = params
+            .content_changes
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        self.analyze(uri, text).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        self.analyze(params.text_document.uri, params.text.unwrap_or_default())
-            .await;
+        let uri = params.text_document.uri.clone();
+        let text = params.text.clone().unwrap_or_default();
+        self.analyze(uri, text).await;
+    }
+
+    async fn did_close(&self, _params: DidCloseTextDocumentParams) {}
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        for change in &params.changes {
+            if change.uri.path().ends_with(".ipynb") {
+                if let Ok(text) = std::fs::read_to_string(change.uri.path()) {
+                    self.analyze(change.uri.clone(), text).await;
+                }
+            }
+        }
     }
 }
 
 impl LspBackend {
     async fn analyze(&self, uri: Url, text: String) {
         let cache = Arc::clone(&self.cell_cache);
-        let all_diagnostics = tokio::task::spawn_blocking(move || {
+        let maybe_diagnostics = tokio::task::spawn_blocking(move || {
             let mut cache = cache.lock().unwrap();
             compute_lsp_diagnostics(&text, &mut cache)
         })
         .await
-        .unwrap_or_default();
-        self.client
-            .publish_diagnostics(uri, all_diagnostics, None)
-            .await;
+        .unwrap_or(None);
+        // On parse failure, keep previous diagnostics (avoid flicker).
+        if let Some(all_diagnostics) = maybe_diagnostics {
+            self.client
+                .publish_diagnostics(uri, all_diagnostics, None)
+                .await;
+        }
     }
 }
 
 fn compute_lsp_diagnostics(
     text: &str,
     cell_cache: &mut LruCache<String, Vec<Diagnostic>>,
-) -> Vec<lsp_types::Diagnostic> {
-    let nb: nbformat::v4::Notebook = match serde_json::from_str(text) {
-        Ok(nb) => nb,
-        // Parse failure clears all squiggles for the URI.
-        Err(_) => return Vec::new(),
-    };
+) -> Option<Vec<lsp_types::Diagnostic>> {
+    let nb: nbformat::v4::Notebook = serde_json::from_str(text).ok()?;
 
     let line_index = LineIndex::new(text);
     let mut all_lsp: Vec<lsp_types::Diagnostic> = Vec::new();
@@ -99,6 +140,7 @@ fn compute_lsp_diagnostics(
         }
 
         let sha = compute_cell_sha(cell);
+        let cell_id = cell.cell_id_str();
 
         let own_diags = if let Some(cached) = cell_cache.get(&sha) {
             cached.clone()
@@ -111,19 +153,22 @@ fn compute_lsp_diagnostics(
         let state_diags = compute_state_diagnostics(&nb, cell_index);
 
         for diag in state_diags.iter().chain(own_diags.iter()) {
-            if let Some(lsp_diag) = map_to_lsp_diagnostic(text, &line_index, cell_index, diag) {
+            if let Some(lsp_diag) =
+                map_to_lsp_diagnostic(text, &line_index, cell_index, cell_id, diag)
+            {
                 all_lsp.push(lsp_diag);
             }
         }
     }
 
-    all_lsp
+    Some(all_lsp)
 }
 
 fn map_to_lsp_diagnostic(
     text: &str,
     line_index: &LineIndex,
     cell_index: usize,
+    cell_id: &str,
     diag: &Diagnostic,
 ) -> Option<lsp_types::Diagnostic> {
     let source_path = jpath!["cells", cell_index, "source"];
@@ -150,7 +195,12 @@ fn map_to_lsp_diagnostic(
         }),
         code: Some(NumberOrString::String(diag.r#type.to_string())),
         source: Some("nota-bene".to_string()),
-        message: diag.message.clone(),
+        message: format!(
+            "[{}] {}: {}",
+            cell_index,
+            &cell_id[..cell_id.len().min(8)],
+            diag.message
+        ),
         ..Default::default()
     })
 }
@@ -244,10 +294,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_failure_returns_empty() {
+    fn parse_failure_returns_none() {
         let mut cache = fresh_cache();
         let diags = compute_lsp_diagnostics("not json at all", &mut cache);
-        assert!(diags.is_empty());
+        assert!(diags.is_none());
     }
 
     #[test]
@@ -258,7 +308,7 @@ mod tests {
         let nb = notebook(vec![c1]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert!(diags.is_empty(), "unexpected: {:?}", diags);
     }
 
@@ -267,7 +317,7 @@ mod tests {
         let nb = notebook(vec![plain_code_cell("c1", "x = 1")]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Some(DiagnosticSeverity::ERROR));
         assert_eq!(
@@ -284,7 +334,7 @@ mod tests {
         let nb = notebook(vec![c1]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert!(
             diags.iter().any(|d| d.code
                 == Some(NumberOrString::String("needs_review".to_string()))
@@ -304,7 +354,7 @@ mod tests {
         let nb = notebook(vec![c1, c2]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert!(
             diags
                 .iter()
@@ -323,7 +373,7 @@ mod tests {
         let nb = notebook(vec![c1]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert!(
             diags.iter().any(|d| d.code
                 == Some(NumberOrString::String("diff_conflict".to_string()))
@@ -342,8 +392,8 @@ mod tests {
         let nb = notebook(vec![c1]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags1 = compute_lsp_diagnostics(&text, &mut cache);
-        let diags2 = compute_lsp_diagnostics(&text, &mut cache);
+        let diags1 = compute_lsp_diagnostics(&text, &mut cache).unwrap();
+        let diags2 = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert_eq!(diags1.len(), diags2.len());
         assert_eq!(cache.len(), 1);
     }
@@ -378,7 +428,7 @@ mod tests {
 
         let nb1 = notebook(vec![plain_code_cell("c1", "x = 1"), c2.clone()]);
         let mut cache = fresh_cache();
-        let diags1 = compute_lsp_diagnostics(&nb_text(&nb1), &mut cache);
+        let diags1 = compute_lsp_diagnostics(&nb_text(&nb1), &mut cache).unwrap();
         assert!(
             !diags1
                 .iter()
@@ -388,7 +438,7 @@ mod tests {
 
         // c2 SHA hits cache, but state diagnostics must still catch the ancestor change.
         let nb2 = notebook(vec![plain_code_cell("c1", "x = 999"), c2.clone()]);
-        let diags2 = compute_lsp_diagnostics(&nb_text(&nb2), &mut cache);
+        let diags2 = compute_lsp_diagnostics(&nb_text(&nb2), &mut cache).unwrap();
         assert!(
             diags2
                 .iter()
@@ -405,7 +455,7 @@ mod tests {
         let nb = notebook(vec![c1]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         let d = diags
             .iter()
             .find(|d| d.code == Some(NumberOrString::String("needs_review".to_string())))
@@ -422,7 +472,7 @@ mod tests {
         let nb = notebook(vec![plain_code_cell("c1", "x = 1")]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         let d = diags
             .iter()
             .find(|d| d.code == Some(NumberOrString::String("missing".to_string())))
@@ -432,6 +482,57 @@ mod tests {
         let (sl, sc) = line_index.offset_to_position(expected.start);
         assert_eq!(d.range.start.line, sl as u32);
         assert_eq!(d.range.start.character, sc as u32);
+    }
+
+    /// Integration test: verify that LSP diagnostic ranges for `simple.ipynb`
+    /// point to the correct line/column positions in the actual fixture file.
+    ///
+    /// Expected positions are hardcoded (computed independently of
+    /// `json_path_range` / `LineIndex`) so the test actually validates the
+    /// production code rather than comparing it against itself.
+    #[test]
+    fn lsp_diagnostic_line_numbers_match_fixture() {
+        let fixture_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/simple.ipynb");
+        let text =
+            std::fs::read_to_string(&fixture_path).expect("read tests/fixtures/simple.ipynb");
+
+        let mut cache = fresh_cache();
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
+
+        let missing: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == Some(NumberOrString::String("missing".to_string())))
+            .collect();
+        assert_eq!(
+            missing.len(),
+            4,
+            "expected exactly 4 'missing' diagnostics (one per code cell); got: {:?}",
+            diags
+        );
+
+        // (cell_index, cell_id, start_line, start_col, end_line, end_col)
+        // All values 0-indexed, derived from the raw fixture JSON.
+        let cases: &[(usize, &str, u32, u32, u32, u32)] = &[
+            (1, "plain-data", 18, 13, 20, 4),
+            (2, "compute-total", 42, 13, 44, 4),
+            (3, "reviewed-pass", 58, 13, 60, 4),
+            (4, "b451fcb4-6e4d-481c-962f-d9bd647e9419", 68, 13, 68, 15),
+        ];
+
+        for &(cell_index, label, sl, sc, el, ec) in cases {
+            let diag = missing
+                .iter()
+                .find(|d| d.message.contains(&format!("[{cell_index}]")))
+                .unwrap_or_else(|| {
+                    panic!("no 'missing' diagnostic for cell index {cell_index} ({label})")
+                });
+
+            assert_eq!(diag.range.start.line, sl, "{label} start line");
+            assert_eq!(diag.range.start.character, sc, "{label} start col");
+            assert_eq!(diag.range.end.line, el, "{label} end line");
+            assert_eq!(diag.range.end.character, ec, "{label} end col");
+        }
     }
 
     #[test]
@@ -445,7 +546,48 @@ mod tests {
         let nb = notebook(vec![md]);
         let text = nb_text(&nb);
         let mut cache = fresh_cache();
-        let diags = compute_lsp_diagnostics(&text, &mut cache);
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
         assert!(diags.is_empty());
+    }
+
+    /// Regression test: every code cell in simple.ipynb should produce a
+    /// diagnostic. Currently (broken) only 3 are emitted; the hello-world and
+    /// b451fcb4 cells at the end are silently dropped.
+    #[test]
+    fn lsp_diagnoses_all_code_cells_in_fixture() {
+        let fixture_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/simple.ipynb");
+        let text =
+            std::fs::read_to_string(&fixture_path).expect("read tests/fixtures/simple.ipynb");
+
+        let nb: nbformat::v4::Notebook =
+            serde_json::from_str(&text).expect("fixture must parse as a valid v4 notebook");
+
+        let code_cell_count = nb
+            .cells
+            .iter()
+            .filter(|c| matches!(c, nbformat::v4::Cell::Code { .. }))
+            .count();
+
+        let mut cache = fresh_cache();
+        let diags = compute_lsp_diagnostics(&text, &mut cache).unwrap();
+
+        let missing: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == Some(NumberOrString::String("missing".to_string())))
+            .collect();
+
+        assert_eq!(
+            missing.len(),
+            code_cell_count,
+            "expected one 'missing' diagnostic per code cell ({code_cell_count} total); \
+             got {} — parsed cells: {:?}",
+            missing.len(),
+            nb.cells
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("[{i}] {:?}", c.cell_id()))
+                .collect::<Vec<_>>(),
+        );
     }
 }
