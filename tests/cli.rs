@@ -2073,3 +2073,442 @@ fn update_validation_failure_stdout_empty() {
         "stdout should be empty on validation failure"
     );
 }
+
+// ===========================================================================
+// nota-bene test
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Run `nota-bene test <path> [args...]` using the test venv Python.
+/// Returns (stdout, stderr, exit_status).
+fn run_nota_bene_test(
+    nb_path: &std::path::Path,
+    args: &[&str],
+) -> (String, String, std::process::ExitStatus) {
+    let output = std::process::Command::new(common::binary())
+        .arg("test")
+        .arg(nb_path)
+        .arg("--python")
+        .arg(common::python())
+        .args(args)
+        .output()
+        .expect("spawn nota-bene test");
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status,
+    )
+}
+
+/// Parse the stdout of `nota-bene test` as a JSON array of results.
+fn parse_test_results(stdout: &str) -> Vec<serde_json::Value> {
+    serde_json::from_str(stdout)
+        .unwrap_or_else(|e| panic!("failed to parse test results JSON: {e}\nstdout: {stdout}"))
+}
+
+// ---------------------------------------------------------------------------
+// Success cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pass_exits_zero() {
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(
+        status.success(),
+        "expected exit 0 for passing test, got {:?}\nstdout: {stdout}\nstderr: {stderr}",
+        status.code()
+    );
+}
+
+#[test]
+fn test_pass_result_is_completed() {
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["status"].as_str(), Some("completed"));
+    assert_eq!(results[0]["cell_id"].as_str(), Some("compute-total"));
+    assert_eq!(results[0]["test_name"].as_str(), Some("total is 60"));
+}
+
+#[test]
+fn test_pass_implicit_subtest_passed() {
+    // No explicit subtest() calls → single implicit subtest using test name
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let subtests = results[0]["subtests"].as_array().unwrap();
+    assert_eq!(subtests.len(), 1);
+    assert_eq!(subtests[0]["passed"].as_bool(), Some(true));
+    assert!(subtests[0]["error"].is_null());
+    assert!(subtests[0]["traceback"].is_null());
+}
+
+#[test]
+fn test_pass_fixture_runs_before_cell() {
+    // Fixture overrides data=[10,20,30] so total==60, not 6 from data=[1,2,3]
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(status.success());
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["subtests"][0]["passed"].as_bool(), Some(true));
+}
+
+#[test]
+fn test_pass_with_diff_applied() {
+    // Diff patches `x = "original"` → `x = path_val`; fixture sets path_val = "patched"
+    let nb = common::fixtures_dir().join("test-with-diff.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(
+        status.success(),
+        "expected exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["status"].as_str(), Some("completed"));
+    assert_eq!(results[0]["subtests"][0]["passed"].as_bool(), Some(true));
+}
+
+// ---------------------------------------------------------------------------
+// Test failure cases (exit 1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_fail_assertion_exits_one() {
+    let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "expected exit 1 for failing test\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_fail_assertion_result_is_completed_not_error() {
+    // A test assertion failure is "completed" with passed=false, not an infra "error"
+    let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["status"].as_str(), Some("completed"));
+}
+
+#[test]
+fn test_fail_assertion_subtest_not_passed() {
+    let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let subtests = results[0]["subtests"].as_array().unwrap();
+    assert_eq!(subtests.len(), 1);
+    assert_eq!(subtests[0]["passed"].as_bool(), Some(false));
+}
+
+#[test]
+fn test_fail_assertion_error_and_traceback_present() {
+    let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let sub = &results[0]["subtests"][0];
+    assert!(
+        sub["error"].as_str().is_some(),
+        "error field must be a string on failure"
+    );
+    assert!(
+        sub["traceback"].as_str().is_some(),
+        "traceback field must be a string on failure"
+    );
+    assert!(
+        sub["error"].as_str().unwrap().contains("expected 2"),
+        "error should contain assertion message"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Subtest cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_subtests_partial_fail_exits_one() {
+    let nb = common::fixtures_dir().join("test-subtests.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "expected exit 1\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_subtests_both_reported() {
+    // A failing subtest must not prevent subsequent subtests from running/reporting
+    let nb = common::fixtures_dir().join("test-subtests.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let subtests = results[0]["subtests"].as_array().unwrap();
+    assert_eq!(subtests.len(), 2, "both subtests must be reported");
+}
+
+#[test]
+fn test_subtests_first_passes_second_fails() {
+    let nb = common::fixtures_dir().join("test-subtests.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let subtests = results[0]["subtests"].as_array().unwrap();
+    assert_eq!(
+        subtests[0]["passed"].as_bool(),
+        Some(true),
+        "first subtest should pass"
+    );
+    assert_eq!(
+        subtests[1]["passed"].as_bool(),
+        Some(false),
+        "second subtest should fail"
+    );
+}
+
+#[test]
+fn test_subtests_names_preserved() {
+    let nb = common::fixtures_dir().join("test-subtests.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let subtests = results[0]["subtests"].as_array().unwrap();
+    assert_eq!(subtests[0]["name"].as_str(), Some("correct result"));
+    assert_eq!(subtests[1]["name"].as_str(), Some("wrong assertion"));
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure failure cases (exit 2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_fixture_error_exits_two() {
+    let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "expected exit 2 for fixture error\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_fixture_error_status_is_error_not_completed() {
+    // A fixture failure is an infrastructure error — must not be reported as
+    // "completed" even though allow_errors=True lets execution continue past it
+    let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("error"),
+        "fixture error must yield status=error, not completed"
+    );
+}
+
+#[test]
+fn test_fixture_error_phase_is_fixture() {
+    let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["error"]["phase"].as_str(), Some("fixture"));
+    assert_eq!(
+        results[0]["error"]["fixture_name"].as_str(),
+        Some("bad_fixture")
+    );
+}
+
+#[test]
+fn test_fixture_error_detail_contains_exception() {
+    let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let detail = results[0]["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("RuntimeError") && detail.contains("fixture exploded"),
+        "detail should mention the exception, got: {detail}"
+    );
+}
+
+#[test]
+fn test_source_cell_error_exits_two() {
+    let nb = common::fixtures_dir().join("test-source-error.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "expected exit 2 for source cell error\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_source_cell_error_status_is_error() {
+    let nb = common::fixtures_dir().join("test-source-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["status"].as_str(), Some("error"));
+}
+
+#[test]
+fn test_source_cell_error_phase_is_cell_source() {
+    let nb = common::fixtures_dir().join("test-source-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results[0]["error"]["phase"].as_str(), Some("cell_source"));
+    assert_eq!(
+        results[0]["error"]["source_cell_id"].as_str(),
+        Some("bad-source")
+    );
+}
+
+#[test]
+fn test_source_cell_error_detail_contains_exception() {
+    let nb = common::fixtures_dir().join("test-source-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let detail = results[0]["error"]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("RuntimeError") && detail.contains("source cell exploded"),
+        "detail should mention the exception, got: {detail}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Parallel execution
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_parallel_all_cells_run() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(
+        status.success(),
+        "expected exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    let results = parse_test_results(&stdout);
+    assert_eq!(results.len(), 2, "both cells should be tested");
+}
+
+#[test]
+fn test_parallel_correct_cell_ids_present() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let cell_ids: Vec<&str> = results
+        .iter()
+        .filter_map(|r| r["cell_id"].as_str())
+        .collect();
+    assert!(cell_ids.contains(&"cell-a"), "cell-a missing from results");
+    assert!(cell_ids.contains(&"cell-b"), "cell-b missing from results");
+}
+
+#[test]
+fn test_parallel_both_pass() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(status.success());
+    let results = parse_test_results(&stdout);
+    for r in &results {
+        assert_eq!(r["status"].as_str(), Some("completed"));
+        assert_eq!(r["subtests"][0]["passed"].as_bool(), Some(true));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Filter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_filter_selects_single_cell() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &["--filter", "cell:cell-a"]);
+    assert!(status.success());
+    let results = parse_test_results(&stdout);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["cell_id"].as_str(), Some("cell-a"));
+}
+
+#[test]
+fn test_filter_excludes_other_cell() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &["--filter", "cell:cell-b"]);
+    let results = parse_test_results(&stdout);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["cell_id"].as_str(), Some("cell-b"));
+}
+
+#[test]
+fn test_no_matching_filter_returns_empty_array() {
+    let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
+    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &["--filter", "cell:nonexistent"]);
+    assert!(status.success());
+    let results = parse_test_results(&stdout);
+    assert!(results.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// CLI argument validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_no_filter_runs_all_cells() {
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    assert!(
+        status.success(),
+        "expected zero exit when no --filter given"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
+    assert!(parsed.as_array().is_some_and(|a| !a.is_empty()));
+}
+
+// ---------------------------------------------------------------------------
+// Output schema
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_output_is_valid_json_array() {
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
+    assert!(parsed.is_array(), "output must be a JSON array");
+}
+
+#[test]
+fn test_completed_result_schema() {
+    let nb = common::fixtures_dir().join("test-pass.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let r = &results[0];
+    assert!(r.get("cell_id").is_some(), "missing cell_id");
+    assert!(r.get("test_name").is_some(), "missing test_name");
+    assert!(r.get("status").is_some(), "missing status");
+    assert!(r.get("subtests").is_some(), "missing subtests");
+    let sub = &r["subtests"][0];
+    assert!(sub.get("name").is_some(), "subtest missing name");
+    assert!(sub.get("passed").is_some(), "subtest missing passed");
+    assert!(sub.get("error").is_some(), "subtest missing error key");
+    assert!(
+        sub.get("traceback").is_some(),
+        "subtest missing traceback key"
+    );
+}
+
+#[test]
+fn test_error_result_schema() {
+    let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
+    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let results = parse_test_results(&stdout);
+    let r = &results[0];
+    assert!(r.get("cell_id").is_some(), "missing cell_id");
+    assert!(r.get("test_name").is_some(), "missing test_name");
+    assert!(r.get("status").is_some(), "missing status");
+    assert!(r.get("error").is_some(), "missing error object");
+    let err = &r["error"];
+    assert!(err.get("phase").is_some(), "error missing phase");
+    assert!(err.get("detail").is_some(), "error missing detail");
+}

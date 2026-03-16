@@ -9,6 +9,7 @@ mod metadata;
 mod notebook;
 mod save;
 mod shas;
+mod test_runner;
 mod update;
 mod view;
 
@@ -129,6 +130,21 @@ enum Command {
     /// Generate a well-formed JSON fragment for use with `nb update`.
     #[command(subcommand)]
     Scaffold(ScaffoldCommand),
+    /// Run notebook cell tests.
+    Test {
+        /// Path to the source .ipynb file.
+        path: PathBuf,
+        /// Filter which cells to test (same syntax as view/accept).
+        /// If omitted, all cells with tests are run.
+        #[arg(long = "filter", verbatim_doc_comment)]
+        filters: Vec<String>,
+        /// Python binary to use (default: "python" from PATH).
+        #[arg(long, default_value = "python")]
+        python: String,
+        /// Per-cell execution timeout in seconds.
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -210,9 +226,14 @@ fn main() -> Result<()> {
             filters,
         }) => run_accept(path, stdin, all, filters),
         Some(Command::Scaffold(cmd)) => run_scaffold(cmd),
+        Some(Command::Test {
+            path,
+            filters,
+            python,
+            timeout,
+        }) => run_test(path, filters, python, timeout),
     }
 }
-
 /// Derive the editor notebook path from the source path.
 fn editor_path(source_path: &Path) -> Result<PathBuf> {
     let stem = source_path
@@ -587,4 +608,175 @@ fn run_scaffold(cmd: ScaffoldCommand) -> Result<()> {
         serde_json::to_string_pretty(&json).context("serializing scaffold")?
     );
     Ok(())
+}
+
+/// `nota-bene test <path>`: run notebook cell tests in parallel.
+fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u64) -> Result<()> {
+    let nb =
+        load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?;
+
+    let filters: Vec<filter::Filter> = raw_filters
+        .iter()
+        .map(|s| filter::Filter::parse(s))
+        .collect::<Result<_>>()?;
+
+    let use_filters = !filters.is_empty();
+
+    // Collect (index, cell_id, test_name) for matching cells that have a test.
+    let targets: Vec<(usize, String, String)> = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
+                return None;
+            }
+            let data = cell.nota_bene()?;
+            let test = data.test.as_ref()?;
+            if !use_filters || filter::cell_matches_all(&filters, &nb, cell, i) {
+                Some((i, cell.cell_id_str().to_string(), test.name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if targets.is_empty() {
+        let json = serde_json::to_string_pretty(&serde_json::json!([])).unwrap();
+        println!("{json}");
+        return Ok(());
+    }
+
+    // Serialize the notebook once for reference — each target gets its own
+    // test notebook generated from the source.
+    let tasks: Vec<_> = targets
+        .iter()
+        .map(|(idx, cell_id, test_name)| {
+            let test_nb = test_runner::build_test_notebook(&nb, *idx)?;
+            let test_nb_json = nbformat::serialize_notebook(&nbformat::Notebook::V4(test_nb))
+                .context("serializing test notebook")?;
+            Ok((cell_id.clone(), test_name.clone(), test_nb_json))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Spawn all subprocesses in parallel.
+    let handles: Vec<_> = tasks
+        .into_iter()
+        .map(|(cell_id, test_name, test_nb_json)| {
+            let python = python.clone();
+            let timeout_str = timeout.to_string();
+            std::thread::spawn(move || -> (String, String, test_runner::CellTestResult) {
+                let result = run_executor_subprocess(
+                    &python,
+                    &timeout_str,
+                    &test_nb_json,
+                    &cell_id,
+                    &test_name,
+                );
+                (cell_id, test_name, result)
+            })
+        })
+        .collect();
+
+    // Collect results in original order.
+    let mut results: Vec<test_runner::CellTestResult> = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let (_, _, result) = handle
+            .join()
+            .unwrap_or_else(|_| panic!("executor thread panicked"));
+        results.push(result);
+    }
+
+    let all_passed = results.iter().all(|r| r.all_passed());
+    let any_error = results.iter().any(|r| r.is_error());
+
+    let json = serde_json::to_string_pretty(&results).context("serializing results")?;
+    println!("{json}");
+
+    if any_error {
+        std::process::exit(2);
+    } else if !all_passed {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Spawn the Python executor subprocess, pipe the test notebook to stdin,
+/// collect stdout, and extract results.
+fn run_executor_subprocess(
+    python: &str,
+    timeout_str: &str,
+    test_nb_json: &str,
+    cell_id: &str,
+    test_name: &str,
+) -> test_runner::CellTestResult {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = match Command::new(python)
+        .args(["-m", "nota_bene._executor", timeout_str])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return test_runner::executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to spawn executor: {e}"),
+            );
+        }
+    };
+
+    // Write notebook JSON to stdin, then close it.
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(test_nb_json.as_bytes()) {
+            return test_runner::executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to write to executor stdin: {e}"),
+            );
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            return test_runner::executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to wait for executor: {e}"),
+            );
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        let detail = if let Some(msg) = stderr.strip_prefix("__NB_EXEC_ERROR__") {
+            format!("Executor error: {}", msg.trim())
+        } else if !stderr.is_empty() {
+            format!(
+                "Executor failed ({}). stderr: {}",
+                output.status,
+                stderr.trim()
+            )
+        } else {
+            format!("Executor failed ({})", output.status)
+        };
+        return test_runner::executor_error_result(cell_id, test_name, &detail);
+    }
+
+    match test_runner::parse_executed_notebook(&stdout) {
+        Ok(executed_nb) => test_runner::extract_results(&executed_nb, cell_id, test_name),
+        Err(e) => test_runner::executor_error_result(
+            cell_id,
+            test_name,
+            &format!("Failed to parse executed notebook: {e}"),
+        ),
+    }
 }
