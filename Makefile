@@ -1,4 +1,4 @@
-.PHONY: help build clean lint setup-sample-project e2e-opencode \
+.PHONY: help build clean lint \
         nb-sync nb-sync-locked nb-test nb-lint nb-format nb-fix nb-typing nb-all nb-build \
         test-setup test clean-venv
 
@@ -12,10 +12,9 @@ help:
 	@echo "nota-bene Makefile targets:"
 	@echo ""
 	@echo "  make build              Build debug CLI (target/debug/nota-bene)"
-	@echo "  make clean              Remove target/ and sample-project/"
+	@echo "  make clean              Remove target/"
 	@echo "  make lint               Check format (cargo fmt) and run clippy (deny warnings)"
-	@echo "  make setup-sample-project  Create sample-project with opencode.json and nota-bene symlink"
-	@echo "  make e2e-opencode        Run functional tests with OpenCode as the tool"
+	@echo "  make test               Set up test venv and run cargo test"
 	@echo ""
 	@echo "  Python package (nota-bene/):"
 	@echo "  make nb-sync            Sync Python dev + lint deps"
@@ -46,10 +45,12 @@ clean-venv:
 	rm -rf $(VENV)
 
 # ---- Rust build / format ---------------------------------------------------
+
+build:
 	cargo build
 
 clean:
-	rm -rf target sample-project
+	rm -rf target
 
 fmt:
 	cargo fmt -- --check
@@ -59,14 +60,7 @@ clippy:
 
 lint: fmt clippy
 
-setup-sample-project: build
-	@mkdir -p sample-project
-	@rm -f sample-project/nota-bene
-	@ln -sf ../target/debug/nota-bene sample-project/nota-bene
-	@API_KEY_REF='{env:OPENROUTER_API_KEY}'; printf '%s\n' "{\"\$$schema\":\"https://opencode.ai/config.json\",\"mcp\":{\"nota-bene\":{\"type\":\"local\",\"command\":[\"./nota-bene\",\"mcp\"],\"enabled\":true}},\"model\":\"openrouter/openrouter/free\",\"provider\":{\"openrouter\":{\"options\":{\"apiKey\":\"$$API_KEY_REF\"}}}}" > sample-project/opencode.json
-
-e2e-opencode: setup-sample-project
-	@./scripts/opencode-e2e.sh
+# ---- Python sub-package (nota-bene/) ---------------------------------------
 
 nb-sync:
 	$(MAKE) -C nota-bene sync
