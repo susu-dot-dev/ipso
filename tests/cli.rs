@@ -627,11 +627,11 @@ fn edit_explicit_nulls_become_absent_after_round_trip() {
     }
 }
 
-/// The section header for a stale cell must contain "Needs review" and
-/// the staleness reason. `compute-total` in simple.ipynb has nota-bene
-/// metadata but no `shas` entry → reason is "No staleness data".
+/// The section header for a cell with nota-bene but no shas must contain
+/// "Needs review". `compute-total` in simple.ipynb has nota-bene metadata
+/// but no `shas` entry → Missing state.
 #[test]
-fn edit_stale_cell_header_contains_needs_review_and_reason() {
+fn edit_unaccepted_cell_header_contains_needs_review_and_reason() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let editor_path = dir.path().join("simple.nota-bene.ipynb");
 
@@ -670,9 +670,10 @@ fn edit_stale_cell_header_contains_needs_review_and_reason() {
         "expected 'Needs review' in section header but got:\n{header_src}"
     );
     assert!(
-        header_src.to_lowercase().contains("shas missing")
-            || header_src.to_lowercase().contains("staleness data"),
-        "expected staleness reason in section header but got:\n{header_src}"
+        header_src.to_lowercase().contains("sha")
+            || header_src.to_lowercase().contains("accepted")
+            || header_src.to_lowercase().contains("never"),
+        "expected reason about missing shas in section header but got:\n{header_src}"
     );
 }
 
@@ -1226,7 +1227,7 @@ fn run_status(
 
 #[test]
 fn status_exits_nonzero_when_invalid_cells_exist() {
-    // simple.ipynb has cells with nota-bene but no shas → missing_sha → invalid
+    // simple.ipynb has cells with nota-bene but no shas → missing → invalid
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (stdout, _stderr, status) = run_status(&source_path, &[]);
     assert!(
@@ -1527,7 +1528,7 @@ fn update_unknown_cell_fails() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|d| { d["type"].as_str() == Some("unknown_cell") }));
+        .any(|d| { d["type"].as_str() == Some("invalid_field") }));
 }
 
 #[test]
@@ -1552,8 +1553,8 @@ fn update_invalid_fixture_missing_fields_fails() {
         .filter_map(|d| d["type"].as_str())
         .collect();
     assert!(
-        types.contains(&"missing_field"),
-        "should report missing_field diagnostics"
+        types.contains(&"invalid_field"),
+        "should report invalid_field diagnostics"
     );
 }
 
@@ -1880,17 +1881,29 @@ fn accept_stdin_mode_writes_to_stdout() {
 // --- accept: plain cells untouched by --all ---
 
 #[test]
-fn accept_all_does_not_stamp_plain_cells() {
+fn accept_all_stamps_plain_cells_with_shas_only() {
+    // accept --all now creates nota-bene shas on plain code cells so they become
+    // valid. Fixtures, diff, and test remain absent — accept does not invent them.
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (_stdout, _stderr, status) = run_accept(&source_path, &["--all"]);
     assert!(status.success());
 
-    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let (stdout, _stderr, _) = run_view(
+        &source_path,
+        &["--filter", "cell:plain-data", "--fields", "cell_id,status"],
+    );
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
-    // plain-data has no nota-bene metadata, so accept should not add any
     assert!(
-        arr[0]["fixtures"].is_null() && arr[0]["test"].is_null() && arr[0]["diff"].is_null(),
-        "plain cell should remain untouched by accept"
+        arr[0]["status"]["valid"].as_bool() == Some(true),
+        "plain-data should be valid after accept --all"
+    );
+
+    // Fixtures, diff, and test must remain absent — accept only sets shas.
+    let (stdout2, _stderr2, _) = run_view(&source_path, &["--filter", "cell:plain-data"]);
+    let arr2: Vec<serde_json::Value> = serde_json::from_str(&stdout2).expect("valid JSON");
+    assert!(
+        arr2[0]["fixtures"].is_null() && arr2[0]["test"].is_null() && arr2[0]["diff"].is_null(),
+        "plain cell should have no fixtures, diff, or test after accept"
     );
 }
 
@@ -1900,16 +1913,15 @@ fn accept_all_does_not_stamp_plain_cells() {
 fn accept_with_diagnostics_type_filter() {
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (_stdout, _stderr, status) =
-        run_accept(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+        run_accept(&source_path, &["--filter", "diagnostics.type:missing"]);
     assert!(status.success());
 
-    // Cells that had missing_sha should now be valid
-    let (stdout, _stderr, _) =
-        run_view(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+    // Cells that had missing should now be valid
+    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "diagnostics.type:missing"]);
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
     assert!(
         arr.is_empty(),
-        "no cells should have missing_sha after accepting them"
+        "no cells should have missing after accepting them"
     );
 }
 
@@ -1935,7 +1947,7 @@ fn view_filter_diff_null() {
 fn view_filter_diagnostics_type() {
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (stdout, _stderr, status) =
-        run_view(&source_path, &["--filter", "diagnostics.type:missing_sha"]);
+        run_view(&source_path, &["--filter", "diagnostics.type:missing"]);
     assert!(status.success());
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
     // Only cells with nota-bene but no shas should match
@@ -1945,8 +1957,8 @@ fn view_filter_diagnostics_type() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|d| d["type"].as_str() == Some("missing_sha")),
-            "each result should have a missing_sha diagnostic"
+                .any(|d| d["type"].as_str() == Some("missing")),
+            "each result should have a missing diagnostic"
         );
     }
 }

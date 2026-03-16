@@ -50,36 +50,60 @@ pub fn compute_snapshot(nb: &Notebook) -> Vec<ShaEntry> {
 }
 
 // ---------------------------------------------------------------------------
-// Staleness
+// CellState
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Staleness {
-    /// Cell has been reviewed and its shas match current notebook state.
-    Valid,
-    /// Cell has nota-bene metadata but no shas snapshot.
-    NotImplemented,
-    /// Cell shas exist but don't match current notebook state.
-    OutOfDate(Vec<String>),
+/// Reasons why a cell's own content is suspect (the cell itself was modified).
+/// Anything derived from the cell's `shas` array that reflects cross-cell
+/// comparisons (ancestor checks) lives in `ancestor_modified` instead.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CellStateResult {
+    /// Reasons the cell's own SHA no longer matches stored state.
+    pub needs_review: Vec<String>,
+    /// Reasons a preceding cell changed, was deleted, inserted, or reordered.
+    pub ancestor_modified: Vec<String>,
 }
 
-/// Compute staleness for a single code cell at position `cell_index` in `nb`.
-pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellState {
+    /// SHAs match; everything checks out.
+    Valid,
+    /// Code cell with no nota-bene setup, or nota-bene present but no shas recorded yet.
+    Missing,
+    /// SHAs exist but something has changed since last accept.
+    Changed(CellStateResult),
+}
+
+/// Compute the cell state for a single cell at position `cell_index` in `nb`.
+///
+/// - Code cells with no `nota-bene` metadata return `Missing` (bug fix: they
+///   must not be silently ignored — the AI needs to set them up).
+/// - Cells with `nota-bene` but no `shas` return `Missing`.
+/// - Cells whose SHAs have drifted return `Changed` with reasons split into
+///   `needs_review` (own content changed) and `ancestor_modified` (preceding
+///   cell changes).
+pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
     let cell = &nb.cells[cell_index];
 
     let data: NotaBeneData = match cell.nota_bene() {
-        None => return Staleness::Valid,
+        None => {
+            // Code cells with no nota-bene metadata have never been configured.
+            if matches!(cell, Cell::Code { .. }) {
+                return CellState::Missing;
+            }
+            return CellState::Valid;
+        }
         Some(d) => d,
     };
 
     let stored_shas = match &data.shas {
-        None => return Staleness::NotImplemented,
+        None => return CellState::Missing,
         Some(s) => s,
     };
 
     let current_snapshot = compute_snapshot(nb);
 
-    let mut reasons = Vec::new();
+    let mut result = CellStateResult::default();
 
     let stored_ids: Vec<&str> = stored_shas.iter().map(|s| s.cell_id.as_str()).collect();
     let current_ids: Vec<&str> = current_snapshot
@@ -91,8 +115,8 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
 
     for entry in stored_shas.iter() {
         if !current_id_set.contains(entry.cell_id.as_str()) {
-            reasons.push(format!(
-                "Preceding cell `{}` was deleted (present at last validation, now missing)",
+            result.ancestor_modified.push(format!(
+                "Cell `{}` was deleted from the notebook after this cell was last accepted. Re-run `nb accept` to update the baseline.",
                 entry.cell_id
             ));
         }
@@ -103,8 +127,8 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
     if let Some(target_pos) = target_pos_current {
         for id in &current_ids[..target_pos] {
             if !stored_id_set.contains(id) {
-                reasons.push(format!(
-                    "Preceding cell `{}` was inserted (not present at last validation)",
+                result.ancestor_modified.push(format!(
+                    "Cell `{}` was inserted before this cell after it was last accepted. Re-run `nb accept` to update the baseline.",
                     id
                 ));
             }
@@ -123,13 +147,17 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
         .filter(|id| stored_id_set.contains(id))
         .collect();
     if stored_existing != current_existing {
-        reasons.push("Cell ordering changed since last validation".to_string());
+        result
+            .ancestor_modified
+            .push("Cells were reordered since this cell was last accepted. Re-run `nb accept` to update the baseline.".to_string());
     }
 
     let current_sha = compute_cell_sha(cell);
     if let Some(stored) = stored_shas.iter().find(|e| e.cell_id == target_id) {
         if stored.sha != current_sha {
-            reasons.push("Cell source changed since fixtures were last validated".to_string());
+            result
+                .needs_review
+                .push("This cell's source or metadata changed since it was last accepted. Review the changes and run `nb accept` to re-baseline.".to_string());
         }
     }
 
@@ -140,8 +168,8 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
                 .find(|e| e.cell_id == current_entry.cell_id)
             {
                 if stored_entry.sha != current_entry.sha {
-                    reasons.push(format!(
-                        "Preceding cell `{}` was modified",
+                    result.ancestor_modified.push(format!(
+                        "Cell `{}` (which this cell depends on) was modified since this cell was last accepted. Check whether the changes affect this cell's tests, then run `nb accept`.",
                         current_entry.cell_id
                     ));
                 }
@@ -149,10 +177,10 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
         }
     }
 
-    if reasons.is_empty() {
-        Staleness::Valid
+    if result.needs_review.is_empty() && result.ancestor_modified.is_empty() {
+        CellState::Valid
     } else {
-        Staleness::OutOfDate(reasons)
+        CellState::Changed(result)
     }
 }
 
@@ -160,14 +188,23 @@ pub fn staleness(nb: &Notebook, cell_index: usize) -> Staleness {
 // accept_cell
 // ---------------------------------------------------------------------------
 
-/// Store the SHA snapshot for a cell. No-ops if the cell has no nota-bene metadata.
+/// Store the SHA snapshot for a cell.
+///
+/// - If the cell already has `nota-bene` metadata, shas are updated in place.
+/// - If the cell is a plain code cell with no `nota-bene` metadata, a minimal
+///   `nota-bene` structure is created (empty fixtures/diff/test) so the cell
+///   is acknowledged and becomes Valid after acceptance.
+/// - Non-code cells (Markdown, Raw) are skipped.
 pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
     let snapshot = compute_snapshot(nb);
     let cell = &mut nb.cells[cell_index];
-    if cell.nota_bene().is_some() {
-        let shas_slice = snapshot[..=cell_index].to_vec();
-        cell.nota_bene_mut().set_shas(shas_slice);
+    if !matches!(cell, Cell::Code { .. }) {
+        return;
     }
+    // Ensure nota-bene key exists (creates it for plain code cells).
+    cell.nota_bene_mut().mark_addressed();
+    let shas_slice = snapshot[..=cell_index].to_vec();
+    cell.nota_bene_mut().set_shas(shas_slice);
 }
 
 #[cfg(test)]
@@ -276,18 +313,35 @@ mod tests {
         assert_eq!(compute_snapshot(&nb)[0].sha, expected);
     }
 
-    // --- staleness ---
+    fn markdown_cell(id: &str, source: &str) -> Cell {
+        Cell::Markdown {
+            id: cid(id),
+            metadata: blank_cell_metadata(),
+            source: vec![source.to_string()],
+            attachments: None,
+        }
+    }
+
+    // --- cell_state ---
 
     #[test]
-    fn absent_meta_returns_valid() {
-        let nb = notebook(vec![plain_cell("c1", "x = 1")]);
-        assert_eq!(staleness(&nb, 0), Staleness::Valid);
+    fn markdown_cell_no_meta_returns_valid() {
+        // Markdown cells are not under nota-bene management; they must never
+        // produce a Missing state, regardless of whether they have metadata.
+        let nb = notebook(vec![markdown_cell("m1", "# Hello")]);
+        assert_eq!(cell_state(&nb, 0), CellState::Valid);
     }
 
     #[test]
-    fn no_shas_field_returns_not_implemented() {
+    fn plain_code_cell_no_meta_returns_missing() {
+        let nb = notebook(vec![plain_cell("c1", "x = 1")]);
+        assert_eq!(cell_state(&nb, 0), CellState::Missing);
+    }
+
+    #[test]
+    fn no_shas_field_returns_missing() {
         let nb = notebook(vec![cell_with_nb_no_shas("c1", "x = 1")]);
-        assert_eq!(staleness(&nb, 0), Staleness::NotImplemented);
+        assert_eq!(cell_state(&nb, 0), CellState::Missing);
     }
 
     #[test]
@@ -297,7 +351,7 @@ mod tests {
         let shas = json!([sha_json(&c1), sha_json(&c2_plain)]);
         let c2 = cell_with_shas("c2", "y = 2", shas);
         let nb = notebook(vec![c1, c2]);
-        assert_eq!(staleness(&nb, 1), Staleness::Valid);
+        assert_eq!(cell_state(&nb, 1), CellState::Valid);
     }
 
     #[test]
@@ -306,96 +360,134 @@ mod tests {
         let shas = json!([sha_json(&c_plain)]);
         let c = cell_with_shas("c1", "x = 1", shas);
         let nb = notebook(vec![c]);
-        assert_eq!(staleness(&nb, 0), Staleness::Valid);
+        assert_eq!(cell_state(&nb, 0), CellState::Valid);
     }
 
     #[test]
-    fn target_cell_source_changed_returns_out_of_date() {
+    fn target_cell_source_changed_returns_needs_review() {
         let c1 = plain_cell("c1", "x = 1");
         let c2_old = plain_cell("c2", "y = 2");
         let shas = json!([sha_json(&c1), sha_json(&c2_old)]);
         let c2 = cell_with_shas("c2", "y = 999", shas);
         let nb = notebook(vec![c1, c2]);
-        match staleness(&nb, 1) {
-            Staleness::OutOfDate(reasons) => {
-                assert!(reasons.iter().any(|r| r.contains("Cell source changed")));
+        match cell_state(&nb, 1) {
+            CellState::Changed(result) => {
+                assert!(result.needs_review.iter().any(|r| r.contains("changed")));
+                assert!(result.ancestor_modified.is_empty());
             }
-            other => panic!("expected OutOfDate, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
     }
 
     #[test]
-    fn preceding_cell_modified_returns_out_of_date() {
+    fn preceding_cell_modified_returns_ancestor_modified() {
         let c1_old = plain_cell("c1", "x = 1");
         let c2_plain = plain_cell("c2", "y = 2");
         let shas = json!([sha_json(&c1_old), sha_json(&c2_plain)]);
         let c1 = plain_cell("c1", "x = 999");
         let c2 = cell_with_shas("c2", "y = 2", shas);
         let nb = notebook(vec![c1, c2]);
-        match staleness(&nb, 1) {
-            Staleness::OutOfDate(reasons) => {
-                assert!(reasons.iter().any(|r| r.contains("modified")));
+        match cell_state(&nb, 1) {
+            CellState::Changed(result) => {
+                assert!(result
+                    .ancestor_modified
+                    .iter()
+                    .any(|r| r.contains("modified")));
+                assert!(result.needs_review.is_empty());
             }
-            other => panic!("expected OutOfDate, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
     }
 
     #[test]
-    fn cell_deleted_returns_out_of_date() {
+    fn cell_deleted_returns_ancestor_modified() {
         let c1 = plain_cell("c1", "x = 1");
         let c_gone = plain_cell("c-gone", "old");
         let c2_plain = plain_cell("c2", "y = 2");
         let shas = json!([sha_json(&c1), sha_json(&c_gone), sha_json(&c2_plain)]);
         let c2 = cell_with_shas("c2", "y = 2", shas);
         let nb = notebook(vec![c1, c2]);
-        match staleness(&nb, 1) {
-            Staleness::OutOfDate(reasons) => {
-                assert!(reasons.iter().any(|r| r.contains("deleted")));
+        match cell_state(&nb, 1) {
+            CellState::Changed(result) => {
+                assert!(result
+                    .ancestor_modified
+                    .iter()
+                    .any(|r| r.contains("deleted")));
             }
-            other => panic!("expected OutOfDate, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
     }
 
     #[test]
-    fn cell_inserted_before_target_returns_out_of_date() {
+    fn cell_inserted_before_target_returns_ancestor_modified() {
         let c1 = plain_cell("c1", "x = 1");
         let c2_plain = plain_cell("c2", "y = 2");
         let shas = json!([sha_json(&c1), sha_json(&c2_plain)]);
         let c_new = plain_cell("c-new", "new stuff");
         let c2 = cell_with_shas("c2", "y = 2", shas);
         let nb = notebook(vec![c1, c_new, c2]);
-        match staleness(&nb, 2) {
-            Staleness::OutOfDate(reasons) => {
-                assert!(reasons.iter().any(|r| r.contains("inserted")));
+        match cell_state(&nb, 2) {
+            CellState::Changed(result) => {
+                assert!(result
+                    .ancestor_modified
+                    .iter()
+                    .any(|r| r.contains("inserted")));
             }
-            other => panic!("expected OutOfDate, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
     }
 
     #[test]
-    fn cell_reordered_returns_out_of_date() {
+    fn cell_reordered_returns_ancestor_modified() {
         let c1 = plain_cell("c1", "x = 1");
         let c2_plain = plain_cell("c2", "y = 2");
         let shas = json!([sha_json(&c1), sha_json(&c2_plain)]);
         let c2 = cell_with_shas("c2", "y = 2", shas);
         let nb = notebook(vec![c2, c1]); // reordered
-        match staleness(&nb, 0) {
-            Staleness::OutOfDate(reasons) => {
-                assert!(reasons.iter().any(|r| r.contains("ordering")));
+        match cell_state(&nb, 0) {
+            CellState::Changed(result) => {
+                assert!(result
+                    .ancestor_modified
+                    .iter()
+                    .any(|r| r.contains("reorder") || r.contains("reorder")));
             }
-            other => panic!("expected OutOfDate, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
     }
 
     #[test]
-    fn inserted_after_target_does_not_trigger_out_of_date() {
+    fn both_self_and_ancestor_changed_populates_both_buckets() {
+        let c1_old = plain_cell("c1", "x = 1");
+        let c2_old = plain_cell("c2", "y = 2");
+        let shas = json!([sha_json(&c1_old), sha_json(&c2_old)]);
+        // c1 changed (ancestor) AND c2's own source changed
+        let c1 = plain_cell("c1", "x = 999");
+        let c2 = cell_with_shas("c2", "y = 999", shas);
+        let nb = notebook(vec![c1, c2]);
+        match cell_state(&nb, 1) {
+            CellState::Changed(result) => {
+                assert!(
+                    !result.needs_review.is_empty(),
+                    "needs_review should be non-empty"
+                );
+                assert!(
+                    !result.ancestor_modified.is_empty(),
+                    "ancestor_modified should be non-empty"
+                );
+            }
+            other => panic!("expected Changed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inserted_after_target_does_not_trigger_changed() {
         let c1_plain = plain_cell("c1", "x = 1");
         let shas = json!([sha_json(&c1_plain)]);
         let c1 = cell_with_shas("c1", "x = 1", shas);
         let c_after = plain_cell("c-after", "new");
         let nb = notebook(vec![c1, c_after]);
-        // c-after is after c1, so it shouldn't affect staleness of c1.
-        assert_eq!(staleness(&nb, 0), Staleness::Valid);
+        // c-after is after c1, so it shouldn't affect cell_state of c1.
+        assert_eq!(cell_state(&nb, 0), CellState::Valid);
     }
 
     // --- compute_cell_sha metadata sensitivity ---
@@ -539,11 +631,17 @@ mod tests {
     }
 
     #[test]
-    fn accept_cell_skips_cell_without_nb_metadata() {
-        let c1 = plain_cell("c1", "x = 1"); // no nota-bene
+    fn accept_cell_creates_nb_metadata_on_plain_code_cell() {
+        let c1 = plain_cell("c1", "x = 1");
         let mut nb = notebook(vec![c1]);
         accept_cell(&mut nb, 0);
-        assert!(nb.cells[0].nota_bene().is_none());
+        let data = nb.cells[0]
+            .nota_bene()
+            .expect("nota-bene should exist after accept");
+        let shas = data.shas.expect("shas should be set");
+        assert_eq!(shas.len(), 1);
+        assert_eq!(shas[0].cell_id, "c1");
+        assert_eq!(cell_state(&nb, 0), CellState::Valid);
     }
 
     #[test]
@@ -566,11 +664,11 @@ mod tests {
     }
 
     #[test]
-    fn accept_cell_produces_valid_staleness() {
+    fn accept_cell_produces_valid_state() {
         let c1 = plain_cell("c1", "x = 1");
         let c2 = cell_with_nb_no_shas("c2", "y = 2");
         let mut nb = notebook(vec![c1, c2]);
         accept_cell(&mut nb, 1);
-        assert_eq!(staleness(&nb, 1), Staleness::Valid);
+        assert_eq!(cell_state(&nb, 1), CellState::Valid);
     }
 }

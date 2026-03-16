@@ -19,6 +19,8 @@ serde_json = "1"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 jsonc-parser = "0.29"
+tower-lsp = "0.20"
+lru = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

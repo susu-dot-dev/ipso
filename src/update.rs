@@ -90,10 +90,10 @@ pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic
         });
         if !cell_exists {
             diagnostics.push(Diagnostic {
-                r#type: DiagnosticType::UnknownCell,
+                r#type: DiagnosticType::InvalidField,
                 severity: Severity::Error,
                 message: format!(
-                    "cell_id '{}' does not exist in the notebook",
+                    "No code cell with id '{}' exists in this notebook.",
                     update.cell_id
                 ),
                 field: "cell_id".to_string(),
@@ -112,9 +112,9 @@ pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic
                 }
             } else {
                 diagnostics.push(Diagnostic {
-                    r#type: DiagnosticType::InvalidValue,
+                    r#type: DiagnosticType::InvalidField,
                     severity: Severity::Error,
-                    message: "fixtures must be null or an object".to_string(),
+                    message: "fixtures must be null (to clear) or an object mapping fixture names to fixture definitions.".to_string(),
                     field: "fixtures".to_string(),
                 });
             }
@@ -125,39 +125,42 @@ pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic
             if let Some(obj) = test_val.as_object() {
                 if !obj.contains_key("name") {
                     diagnostics.push(Diagnostic {
-                        r#type: DiagnosticType::MissingField,
+                        r#type: DiagnosticType::InvalidField,
                         severity: Severity::Error,
-                        message: "test is missing required field 'name'".to_string(),
+                        message: "test is missing required field 'name'. Provide a test function name as a string.".to_string(),
                         field: "test.name".to_string(),
                     });
                 } else if !obj["name"].is_string() {
                     diagnostics.push(Diagnostic {
-                        r#type: DiagnosticType::InvalidValue,
+                        r#type: DiagnosticType::InvalidField,
                         severity: Severity::Error,
-                        message: "test.name must be a string".to_string(),
+                        message: "test.name must be a string (the name of the test function)."
+                            .to_string(),
                         field: "test.name".to_string(),
                     });
                 }
                 if !obj.contains_key("source") {
                     diagnostics.push(Diagnostic {
-                        r#type: DiagnosticType::MissingField,
+                        r#type: DiagnosticType::InvalidField,
                         severity: Severity::Error,
-                        message: "test is missing required field 'source'".to_string(),
+                        message: "test is missing required field 'source'. Provide the test code as a string.".to_string(),
                         field: "test.source".to_string(),
                     });
                 } else if !obj["source"].is_string() && !obj["source"].is_array() {
                     diagnostics.push(Diagnostic {
-                        r#type: DiagnosticType::InvalidValue,
+                        r#type: DiagnosticType::InvalidField,
                         severity: Severity::Error,
-                        message: "test.source must be a string or array of strings".to_string(),
+                        message: "test.source must be a string or array of strings containing the test code.".to_string(),
                         field: "test.source".to_string(),
                     });
                 }
             } else {
                 diagnostics.push(Diagnostic {
-                    r#type: DiagnosticType::InvalidValue,
+                    r#type: DiagnosticType::InvalidField,
                     severity: Severity::Error,
-                    message: "test must be null or an object".to_string(),
+                    message:
+                        "test must be null (to clear) or an object with 'name' and 'source' fields."
+                            .to_string(),
                     field: "test".to_string(),
                 });
             }
@@ -167,9 +170,9 @@ pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic
         if let UpdateField::Value(diff_val) = &update.diff {
             if !diff_val.is_string() {
                 diagnostics.push(Diagnostic {
-                    r#type: DiagnosticType::InvalidValue,
+                    r#type: DiagnosticType::InvalidField,
                     severity: Severity::Error,
-                    message: "diff must be null or a string".to_string(),
+                    message: "diff must be null (to clear) or a unified diff string.".to_string(),
                     field: "diff".to_string(),
                 });
             }
@@ -182,9 +185,9 @@ pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic
 fn validate_fixture(key: &str, val: &Value, diagnostics: &mut Vec<Diagnostic>) {
     let Some(obj) = val.as_object() else {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::InvalidValue,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' must be an object or null"),
+            message: format!("fixture '{key}' must be an object with 'description', 'priority', and 'source' fields, or null to remove it."),
             field: format!("fixtures.{key}"),
         });
         return;
@@ -192,48 +195,48 @@ fn validate_fixture(key: &str, val: &Value, diagnostics: &mut Vec<Diagnostic>) {
 
     if !obj.contains_key("description") {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::MissingField,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' is missing required field 'description'"),
+            message: format!("fixture '{key}' is missing required field 'description'. Provide a short description of what this fixture sets up."),
             field: format!("fixtures.{key}.description"),
         });
     } else if !obj["description"].is_string() {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::InvalidValue,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' description must be a string"),
+            message: format!("fixture '{key}' description must be a string."),
             field: format!("fixtures.{key}.description"),
         });
     }
 
     if !obj.contains_key("priority") {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::MissingField,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' is missing required field 'priority'"),
+            message: format!("fixture '{key}' is missing required field 'priority'. Use an integer to control the order fixtures are applied (lower runs first)."),
             field: format!("fixtures.{key}.priority"),
         });
     } else if !obj["priority"].is_i64() {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::InvalidValue,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' priority must be an integer"),
+            message: format!("fixture '{key}' priority must be an integer (e.g. 0, 1, 10)."),
             field: format!("fixtures.{key}.priority"),
         });
     }
 
     if !obj.contains_key("source") {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::MissingField,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' is missing required field 'source'"),
+            message: format!("fixture '{key}' is missing required field 'source'. Provide the setup code as a string."),
             field: format!("fixtures.{key}.source"),
         });
     } else if !obj["source"].is_string() && !obj["source"].is_array() {
         diagnostics.push(Diagnostic {
-            r#type: DiagnosticType::InvalidValue,
+            r#type: DiagnosticType::InvalidField,
             severity: Severity::Error,
-            message: format!("fixture '{key}' source must be a string or array of strings"),
+            message: format!("fixture '{key}' source must be a string or array of strings containing the setup code."),
             field: format!("fixtures.{key}.source"),
         });
     }
@@ -449,7 +452,7 @@ mod tests {
         let updates = parse_updates(r#"{"cell_id": "nonexistent"}"#).unwrap();
         let diags = validate_updates(&updates, &nb);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].r#type, DiagnosticType::UnknownCell);
+        assert_eq!(diags[0].r#type, DiagnosticType::InvalidField);
         assert_eq!(diags[0].severity, Severity::Error);
     }
 
@@ -460,7 +463,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "fixtures"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "fixtures"));
     }
 
     #[test]
@@ -486,7 +489,7 @@ mod tests {
         assert_eq!(diags.len(), 3);
         assert!(diags
             .iter()
-            .all(|d| d.r#type == DiagnosticType::InvalidValue));
+            .all(|d| d.r#type == DiagnosticType::InvalidField));
     }
 
     #[test]
@@ -505,7 +508,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "fixtures.f1"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "fixtures.f1"));
     }
 
     #[test]
@@ -515,7 +518,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::MissingField && d.field == "test.name"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "test.name"));
     }
 
     #[test]
@@ -525,7 +528,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::MissingField && d.field == "test.source"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "test.source"));
     }
 
     #[test]
@@ -536,7 +539,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "test.name"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "test.name"));
     }
 
     #[test]
@@ -547,7 +550,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "test.source"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "test.source"));
     }
 
     #[test]
@@ -557,7 +560,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "test"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "test"));
     }
 
     #[test]
@@ -567,7 +570,7 @@ mod tests {
         let diags = validate_updates(&updates, &nb);
         assert!(diags
             .iter()
-            .any(|d| d.r#type == DiagnosticType::InvalidValue && d.field == "diff"));
+            .any(|d| d.r#type == DiagnosticType::InvalidField && d.field == "diff"));
     }
 
     #[test]

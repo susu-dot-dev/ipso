@@ -191,7 +191,7 @@ mod tests {
     use super::*;
     use crate::notebook::blank_cell_metadata;
     use crate::shas::compute_cell_sha;
-    use nbformat::v4::{Cell, CellId, Metadata, Notebook};
+    use nbformat::v4::{Cell, CellId, Notebook};
     use serde_json::json;
 
     fn cid(s: &str) -> CellId {
@@ -229,8 +229,16 @@ mod tests {
         }
     }
 
-    fn sha_of(cell: &Cell) -> String {
-        compute_cell_sha(cell)
+    /// Test helper: build a code cell whose stored SHA matches its current content,
+    /// so `cell_state` returns `Valid` and `status.valid` is `true`.
+    fn sha_accepted_cell(id: &str, source: &str) -> Cell {
+        let plain = plain_cell(id, source);
+        let sha = compute_cell_sha(&plain);
+        cell_with_nb(
+            id,
+            source,
+            json!({ "shas": [{ "cell_id": id, "sha": sha }] }),
+        )
     }
 
     // --- Filter::parse ---
@@ -243,8 +251,8 @@ mod tests {
 
     #[test]
     fn parse_multi_value_or() {
-        let f = Filter::parse("diagnostics.type:stale,diff_conflict").unwrap();
-        assert_eq!(f.values, vec!["stale", "diff_conflict"]);
+        let f = Filter::parse("diagnostics.type:needs_review,diff_conflict").unwrap();
+        assert_eq!(f.values, vec!["needs_review", "diff_conflict"]);
     }
 
     #[test]
@@ -331,8 +339,10 @@ mod tests {
     // --- FilterKey::StatusValid ---
 
     #[test]
-    fn filter_status_valid_true_for_plain_cell() {
-        let cell = plain_cell("c1", "x = 1");
+    fn filter_status_valid_true_for_accepted_cell() {
+        // A plain code cell now produces a Missing diagnostic (bug fix), so
+        // use a cell with matching shas to get status.valid:true.
+        let cell = sha_accepted_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("status.valid:true").unwrap();
         assert!(f.matches(&nb, &cell, 0));
@@ -433,39 +443,92 @@ mod tests {
         );
     }
 
+    #[test]
+    fn filter_diagnostics_type_needs_review() {
+        // A cell whose own SHA changed since last accept → NeedsReview warning.
+        let plain = plain_cell("c1", "x = 1");
+        let old_sha = compute_cell_sha(&plain);
+        let cell = cell_with_nb(
+            "c1",
+            "x = 999",
+            json!({ "shas": [{ "cell_id": "c1", "sha": old_sha }] }),
+        );
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.type:needs_review").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
+    #[test]
+    fn filter_diagnostics_type_ancestor_modified() {
+        // A preceding cell changed → AncestorModified warning on this cell.
+        let c1_old = plain_cell("c1", "x = 1");
+        let c2_plain = plain_cell("c2", "y = 2");
+        let old_sha_c1 = compute_cell_sha(&c1_old);
+        let old_sha_c2 = compute_cell_sha(&c2_plain);
+        let c1 = plain_cell("c1", "x = 999"); // ancestor changed
+        let c2 = cell_with_nb(
+            "c2",
+            "y = 2",
+            json!({
+                "shas": [
+                    { "cell_id": "c1", "sha": old_sha_c1 },
+                    { "cell_id": "c2", "sha": old_sha_c2 },
+                ]
+            }),
+        );
+        let nb = notebook(vec![c1, c2.clone()]);
+        let f = Filter::parse("diagnostics.type:ancestor_modified").unwrap();
+        assert!(f.matches(&nb, &c2, 1));
+    }
+
+    #[test]
+    fn filter_diagnostics_severity_warning_matches_needs_review() {
+        // NeedsReview is a Warning — severity:warning should match.
+        let plain = plain_cell("c1", "x = 1");
+        let old_sha = compute_cell_sha(&plain);
+        let cell = cell_with_nb(
+            "c1",
+            "x = 999",
+            json!({ "shas": [{ "cell_id": "c1", "sha": old_sha }] }),
+        );
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diagnostics.severity:warning").unwrap();
+        assert!(f.matches(&nb, &cell, 0));
+    }
+
     // --- FilterKey::DiagnosticsType ---
 
     #[test]
-    fn filter_diagnostics_type_missing_sha() {
-        let cell = cell_with_nb("c1", "x = 1", json!({})); // nb meta but no shas
+    fn filter_diagnostics_type_missing() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // nb meta but no shas → Missing
         let nb = notebook(vec![cell.clone()]);
-        let f = Filter::parse("diagnostics.type:missing_sha").unwrap();
+        let f = Filter::parse("diagnostics.type:missing").unwrap();
         assert!(f.matches(&nb, &cell, 0));
     }
 
     #[test]
     fn filter_diagnostics_type_no_match() {
-        let cell = plain_cell("c1", "x = 1"); // no nb meta → valid, no diagnostics
+        let cell = plain_cell("c1", "x = 1"); // no nb meta → Missing diagnostic
         let nb = notebook(vec![cell.clone()]);
-        let f = Filter::parse("diagnostics.type:stale").unwrap();
+        let f = Filter::parse("diagnostics.type:diff_conflict").unwrap();
         assert!(!f.matches(&nb, &cell, 0));
     }
 
     // --- FilterKey::DiagnosticsSeverity ---
 
     #[test]
-    fn filter_diagnostics_severity_warning() {
-        let cell = cell_with_nb("c1", "x = 1", json!({})); // missing_sha → warning
+    fn filter_diagnostics_severity_error() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // missing → error
         let nb = notebook(vec![cell.clone()]);
-        let f = Filter::parse("diagnostics.severity:warning").unwrap();
+        let f = Filter::parse("diagnostics.severity:error").unwrap();
         assert!(f.matches(&nb, &cell, 0));
     }
 
     #[test]
-    fn filter_diagnostics_severity_error_no_match() {
-        let cell = cell_with_nb("c1", "x = 1", json!({})); // only missing_sha (warning)
+    fn filter_diagnostics_severity_warning_no_match_for_missing() {
+        let cell = cell_with_nb("c1", "x = 1", json!({})); // missing → error, not warning
         let nb = notebook(vec![cell.clone()]);
-        let f = Filter::parse("diagnostics.severity:error").unwrap();
+        let f = Filter::parse("diagnostics.severity:warning").unwrap();
         assert!(!f.matches(&nb, &cell, 0));
     }
 

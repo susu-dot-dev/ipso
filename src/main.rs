@@ -3,6 +3,7 @@ mod diff_utils;
 mod edit;
 mod filter;
 pub mod json_path;
+mod lsp;
 mod mcp;
 mod metadata;
 mod notebook;
@@ -28,6 +29,8 @@ struct Cli {
 enum Command {
     /// Start the MCP server (stdio transport).
     Mcp,
+    /// Start the LSP server (stdio transport).
+    Lsp,
     /// Open a notebook in test-editor mode.
     Edit {
         /// Path to the source .ipynb file.
@@ -63,16 +66,16 @@ enum Command {
         ///   diff:<null|not null>          Diff absent or present
         ///   status.valid:<true|false>     Overall validity
         ///   diagnostics.type:<type>[,…]   Has a diagnostic of this type
-        ///                                 (missing_sha, stale, diff_conflict,
-        ///                                  missing_field, invalid_value,
-        ///                                  unknown_cell)
+        ///                                 (missing, needs_review,
+        ///                                  ancestor_modified, diff_conflict,
+        ///                                  invalid_field)
         ///   diagnostics.severity:<level>  Has a diagnostic of this severity
         ///                                 (error, warning)
         ///
         /// Examples:
         ///   --filter "cell:compute-total"
         ///   --filter "index:2..4"
-        ///   --filter "diagnostics.type:stale,diff_conflict"
+        ///   --filter "diagnostics.type:needs_review,diff_conflict"
         ///   --filter "status.valid:false" --filter "test:null"
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
@@ -163,6 +166,11 @@ fn main() -> Result<()> {
         Some(Command::Mcp) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(mcp::run()).map_err(|e| anyhow::anyhow!(e))
+        }
+        Some(Command::Lsp) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(lsp::run_server());
+            Ok(())
         }
         Some(Command::Edit {
             path,
@@ -521,8 +529,6 @@ fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -
             if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
                 return None;
             }
-            // Skip cells without nota-bene metadata
-            cell.nota_bene()?;
             if all || filter::cell_matches_all(&filters, &nb, cell, i) {
                 Some(i)
             } else {
