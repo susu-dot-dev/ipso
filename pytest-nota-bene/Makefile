@@ -1,9 +1,9 @@
-.PHONY: help sync test lint format fix typing all build
+.PHONY: help sync sync-locked test lint format fix typing all build
 
 .DEFAULT_GOAL := help
 
 help:
-	@echo "nota-bene Python package targets:"
+	@echo "pytest-nota-bene plugin targets:"
 	@echo ""
 	@echo "  make sync           Sync dev + lint deps"
 	@echo "  make sync-locked    Sync from lockfile (for CI)"

@@ -18,8 +18,6 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ""
 
       - name: Build
         run: make build
@@ -27,12 +25,33 @@ jobs:
       - name: Lint
         run: make lint
 
-  python-test:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: nota-bene
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nota-bene-binary
+          path: target/debug/nota-bene
 
+  test-rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Rust integration tests
+        run: make test
+
+  test-nb:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -46,26 +65,55 @@ jobs:
         with:
           python-version-file: nota-bene/.python-version
 
-      - name: Install dependencies
-        run: make sync-locked
-
       - name: Run tests
-        run: make test
+        run: make -C nota-bene test
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-nb
           path: |
             nota-bene/coverage.xml
             nota-bene/htmlcov/
 
-  python-lint:
+  test-pnb:
+    needs: [rust]
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: nota-bene
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nota-bene-binary
+          path: target/debug
+
+      - name: Mark binary executable
+        run: chmod +x target/debug/nota-bene
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pytest-nota-bene/.python-version
+
+      - name: Run tests
+        run: make -C pytest-nota-bene test
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-pnb
+          path: |
+            pytest-nota-bene/coverage.xml
+            pytest-nota-bene/htmlcov/
+
+  lint-nb:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -79,14 +127,29 @@ jobs:
         with:
           python-version-file: nota-bene/.python-version
 
-      - name: Install dependencies
-        run: make sync-locked
+      - name: Lint, format, and type-check
+        run: make -C nota-bene all
+
+  lint-pnb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pytest-nota-bene/.python-version
 
       - name: Lint, format, and type-check
-        run: make all
+        run: make -C pytest-nota-bene all
 
   coverage-comment:
-    needs: python-test
+    needs: [test-nb, test-pnb]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
@@ -95,10 +158,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download coverage artifact
+      - name: Download nota-bene coverage
         uses: actions/download-artifact@v4
         with:
-          name: coverage
+          name: coverage-nb
           path: nota-bene
 
       - name: Post coverage comment

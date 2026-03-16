@@ -102,9 +102,9 @@ def register_nb_skip() -> None:
     silently skips any cell it prefixes so that running all cells does not
     accidentally execute test cells.
     """
-    from IPython.core.magic import register_cell_magic  # type: ignore[import-not-found]
+    from IPython.core.magic import register_cell_magic
 
-    @register_cell_magic  # type: ignore[untyped-decorator]
+    @register_cell_magic
     def nb_skip(line: str, cell: str) -> None:  # noqa: ARG001
         """Skip this cell. Remove %%nb_skip to run it."""
         first_line = cell.splitlines()[0] if cell.strip() else "empty cell"
