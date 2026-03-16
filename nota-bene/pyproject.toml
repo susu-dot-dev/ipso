@@ -5,7 +5,7 @@ description = "Notebook testing with fixtures, patches, and AI-generated tests"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
-dependencies = ["nbclient>=0.7"]
+dependencies = ["nbclient>=0.7", "ipykernel"]
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
