@@ -229,6 +229,7 @@ fn parse_sections(editor: &Notebook) -> Result<Vec<Section>> {
 
         match role {
             Some("setup") => continue,
+            Some("guide") => continue,
             Some("section-header") => {
                 if let Some(b) = current.take() {
                     sections.push(b.finish());

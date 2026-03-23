@@ -65,7 +65,7 @@ pub struct TestError {
 /// Generate a self-contained test notebook for the cell at `target_idx`.
 ///
 /// The notebook walks every code cell from 0..=target_idx in order:
-/// fixtures (wrapped in a function, sorted by priority) then load_cell + execute_cell.
+/// fixtures (raw source per fixture, sorted by priority) then load_cell + execute_cell.
 /// After the target cell's execute_cell, the test source runs (if any),
 /// then results are collected and teardown fires.
 pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Notebook> {
@@ -157,14 +157,7 @@ fn make_setup_cell() -> Cell {
 }
 
 fn make_fixture_cell(source_cell_id: &str, fixture_name: &str, fixture: &Fixture) -> Cell {
-    let indented = fixture
-        .source
-        .lines()
-        .map(|l| format!("    {l}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let source =
-        format!("def _nb_fixture_{fixture_name}():\n{indented}\n\n_nb_fixture_{fixture_name}()");
+    let source = fixture.source.clone();
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
         "nota-bene".to_string(),
@@ -266,6 +259,63 @@ fn make_teardown_cell() -> Cell {
 
 const RESULTS_MARKER: &str = "__NB_RESULTS__";
 
+/// Strip ANSI CSI / OSC sequences and other C0 controls (except `\n` and `\t`)
+/// from kernel-originated text so CLI JSON and pytest output stay readable.
+fn sanitize_kernel_text(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut out = String::with_capacity(s.len());
+    while i < b.len() {
+        if b[i] == 0x1b {
+            if i + 1 < b.len() && b[i + 1] == b'[' {
+                i += 2;
+                while i < b.len() {
+                    let c = b[i];
+                    i += 1;
+                    if (0x40..=0x7e).contains(&c) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if i + 1 < b.len() && b[i + 1] == b']' {
+                i += 2;
+                while i < b.len() {
+                    if b[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if b[i] == 0x1b && i + 1 < b.len() && b[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            if i + 1 < b.len() && (b[i + 1] == b'(' || b[i + 1] == b')') && i + 2 < b.len() {
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        let ch = s[i..].chars().next().unwrap();
+        let len = ch.len_utf8();
+        if ch == '\r' {
+            i += len;
+            continue;
+        }
+        if ch.is_control() && ch != '\n' && ch != '\t' {
+            i += len;
+            continue;
+        }
+        out.push(ch);
+        i += len;
+    }
+    out
+}
+
 /// Extract role from a cell's nota-bene runner metadata.
 fn runner_role(cell: &Cell) -> Option<String> {
     let nb = cell.additional().get("nota-bene")?;
@@ -293,8 +343,8 @@ fn runner_fixture_name(cell: &Cell) -> Option<String> {
 
 /// Format an ErrorOutput into a human-readable detail string and traceback.
 fn format_error(err: &ErrorOutput) -> (String, String) {
-    let detail = format!("{}: {}", err.ename, err.evalue);
-    let traceback = err.traceback.join("\n");
+    let detail = sanitize_kernel_text(&format!("{}: {}", err.ename, err.evalue));
+    let traceback = sanitize_kernel_text(&err.traceback.join("\n"));
     (detail, traceback)
 }
 
@@ -476,6 +526,15 @@ pub fn extract_results(executed: &Notebook, cell_id: &str, test_name: &str) -> C
         subtests = implicit_subtest(executed, test_name);
     }
 
+    for st in &mut subtests {
+        if let Some(ref mut e) = st.error {
+            *e = sanitize_kernel_text(e);
+        }
+        if let Some(ref mut t) = st.traceback {
+            *t = sanitize_kernel_text(t);
+        }
+    }
+
     CellTestResult::Completed {
         cell_id: cell_id.to_string(),
         test_name: test_name.to_string(),
@@ -557,6 +616,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sanitize_kernel_text_strips_sgr() {
+        let s = "A \x1b[31mred\x1b[0m B";
+        assert_eq!(sanitize_kernel_text(s), "A red B");
+    }
+
+    #[test]
+    fn sanitize_kernel_text_keeps_newline_and_tab() {
+        assert_eq!(sanitize_kernel_text("a\n\tb"), "a\n\tb");
+    }
+
+    #[test]
+    fn sanitize_kernel_text_strips_bel() {
+        assert_eq!(sanitize_kernel_text("a\x07b"), "ab");
+    }
+
     // --- build_test_notebook ---
 
     #[test]
@@ -604,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn fixture_wrapped_in_function() {
+    fn fixture_cell_emits_raw_source() {
         let meta = serde_json::json!({
             "fixtures": {
                 "my_fix": {"description": "d", "priority": 0, "source": "x = 1\ny = 2"}
@@ -618,9 +693,9 @@ mod tests {
             .find(|c| runner_role(c).as_deref() == Some("fixture"))
             .expect("fixture cell");
         let src = fixture_cell.source_str();
-        assert!(src.contains("def _nb_fixture_my_fix():"));
-        assert!(src.contains("    x = 1"));
-        assert!(src.contains("_nb_fixture_my_fix()"));
+        assert!(!src.contains("_nb_fixture_"));
+        assert!(src.contains("x = 1"));
+        assert!(src.contains("y = 2"));
     }
 
     #[test]
@@ -639,8 +714,8 @@ mod tests {
             .filter(|c| runner_role(c).as_deref() == Some("fixture"))
             .collect();
         assert_eq!(fixture_cells.len(), 2);
-        assert!(fixture_cells[0].source_str().contains("a_fix"));
-        assert!(fixture_cells[1].source_str().contains("z_fix"));
+        assert!(fixture_cells[0].source_str().contains("a = 1"));
+        assert!(fixture_cells[1].source_str().contains("z = 10"));
     }
 
     #[test]

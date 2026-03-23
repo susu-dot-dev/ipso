@@ -110,7 +110,7 @@ Stored in `cell.metadata.additional["nota-bene"]["editor"]` on every cell the `e
 }
 ```
 
-`role` is one of: `"setup"`, `"section-header"`, `"fixture"`, `"patched-source"`, `"source"`, `"test"`.
+`role` is one of: `"setup"`, `"section-header"`, `"guide"`, `"fixture"`, `"patched-source"`, `"source"`, `"test"`.
 
 `cell_id` refers to the **source notebook cell** the editor cell belongs to (not the editor cell's own Jupyter ID), and is present on all roles except `"setup"`.
 
@@ -148,14 +148,18 @@ Each code cell in the source notebook becomes a **section** in the editor notebo
 #### Cell with nota-bene metadata (`NotaBeneMeta::Present`)
 
 1. **Section header** (markdown cell)
-2. **Fixture cells** (code cells, zero or more) — one per fixture, in priority order
-3. **Patched source cell** (code cell) — carries the original cell's Jupyter ID
-4. **Test cell** (code cell) — guarded with `%%nb_skip`
+2. **Guide** (markdown cell, role `"guide"`) — explains fixture cells
+3. **Fixture cells** (code cells, zero or more) — one per fixture, in priority order (or one stub if none)
+4. **Guide** (markdown cell, role `"guide"`) — explains the patched cell
+5. **Patched source cell** (code cell) — carries the original cell's Jupyter ID
+6. **Guide** (markdown cell, role `"guide"`) — explains the test cell
+7. **Test cell** (code cell) — guarded with `%%nb_skip`
 
 #### Cell without nota-bene metadata (`NotaBeneMeta::Absent`)
 
 1. **Section header** (markdown cell)
-2. **Source cell** (code cell, role `"source"`) — the original source, carrying the original cell's Jupyter ID
+2. **Guide** (markdown cell, role `"guide"`) — explains the source cell
+3. **Source cell** (code cell, role `"source"`) — the original source, carrying the original cell's Jupyter ID
 
 ---
 
@@ -197,6 +201,20 @@ Cell metadata:
 
 ---
 
+### Guide cells (markdown)
+
+Short markdown cells with **no** reconstructable metadata beyond their role. They exist only to label fixture vs patched vs test (or plain source) regions in the Jupyter UI.
+
+Cell metadata:
+
+```json
+{"nota-bene": {"editor": {"role": "guide"}}}
+```
+
+On `--continue`, the parser **skips** guide cells (like the setup cell). They must not produce warnings.
+
+---
+
 ### Fixture Cells (code cells)
 
 One code cell per fixture, sorted by `priority` ascending (stable sort, preserving indexmap insertion order for equal priorities). Each fixture cell begins with a comment header:
@@ -208,7 +226,7 @@ One code cell per fixture, sorted by `priority` ascending (stable sort, preservi
 <fixture source>
 ```
 
-Fixture names are unique within a cell (per `fixtures.md` — different cells may reuse names; the runner includes the cell ID in the wrapper function name to prevent kernel namespace collisions).
+Fixture names must be **globally unique** across the notebook (see `fixtures.md`).
 
 The user can:
 - **Rename** a fixture by editing the `# fixture:` line.
@@ -307,7 +325,7 @@ On any conflict, print a diagnostic to stderr and exit non-zero.
 
 ### Step 3: Parse sections
 
-Walk the editor notebook cells in order. Skip the setup cell (where `nota-bene.editor.role == "setup"`). Build sections by scanning for `role == "section-header"` cells — each header starts a new section extending until the next header (or end of notebook).
+Walk the editor notebook cells in order. Skip cells where `nota-bene.editor.role` is `"setup"` or `"guide"`. Build sections by scanning for `role == "section-header"` cells — each header starts a new section extending until the next header (or end of notebook).
 
 For each section:
 
@@ -316,7 +334,7 @@ For each section:
 - **`patched_source`**: the cell with `role == "patched-source"`, identified by `nota-bene.editor` metadata or by matching Jupyter cell ID to the section's `cell_id`.
 - **`test`**: the cell with `role == "test"`, or the first untagged code cell after the patched-source cell and before the next section header. Strip `%%nb_skip` from the first line if present. Parse `# test:` for the name; source is everything after that line.
 
-Untagged non-code cells (e.g. user-added markdown notes) within a section are ignored.
+Untagged non-code cells (e.g. user-added markdown notes) within a section are ignored with a warning. Official guide cells use `role == "guide"` and are skipped without warning.
 
 ### Step 4: Compute diffs
 

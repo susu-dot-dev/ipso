@@ -631,6 +631,61 @@ fn edit_explicit_nulls_become_absent_after_round_trip() {
 /// "Needs review". `compute-total` in simple.ipynb has nota-bene metadata
 /// but no `shas` entry → Missing state.
 #[test]
+fn edit_notebook_contains_guide_cells() {
+    let (dir, source_path) = setup_fixture("simple.ipynb");
+    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+
+    assert!(
+        run_edit(&source_path).success(),
+        "nota-bene edit exited non-zero"
+    );
+
+    let raw = fs::read_to_string(&editor_path).expect("read editor notebook");
+    let nb: serde_json::Value = serde_json::from_str(&raw).expect("parse editor notebook");
+
+    let guides = nb["cells"]
+        .as_array()
+        .expect("cells")
+        .iter()
+        .filter(|c| c["metadata"]["nota-bene"]["editor"]["role"].as_str() == Some("guide"))
+        .count();
+
+    assert!(
+        guides >= 8,
+        "expected at least 8 guide markdown cells in simple.ipynb editor, got {guides}"
+    );
+}
+
+#[test]
+fn edit_continue_does_not_warn_on_guide_markdown_cells() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    assert!(
+        run_edit(&source_path).success(),
+        "nota-bene edit exited non-zero"
+    );
+
+    let output = std::process::Command::new(common::binary())
+        .args(["edit", "--continue", source_path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn nota-bene edit --continue");
+
+    assert!(
+        output.status.success(),
+        "edit --continue failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("non-code cell"),
+        "official guide cells must not trigger ignore warning; stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn edit_unaccepted_cell_header_contains_needs_review_and_reason() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let editor_path = dir.path().join("simple.nota-bene.ipynb");
@@ -2223,6 +2278,12 @@ fn test_fail_assertion_error_and_traceback_present() {
     assert!(
         sub["error"].as_str().unwrap().contains("expected 2"),
         "error should contain assertion message"
+    );
+
+    let tb = sub["traceback"].as_str().expect("traceback string");
+    assert!(
+        !tb.contains('\x1b'),
+        "traceback should be sanitized (no ESC): {tb:?}"
     );
 }
 
