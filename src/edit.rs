@@ -33,11 +33,13 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
                 match &nb_meta {
                     None => {
                         cells.push(make_section_header_no_tests(cell, cell_pos));
+                        cells.push(make_guide_cell(GUIDE_SOURCE_ONLY));
                         cells.push(make_source_cell_passthrough(cell));
                     }
                     Some(data) => {
                         let state = cell_state(source, idx);
                         cells.push(make_section_header_with_meta(cell, cell_pos, data, &state)?);
+                        cells.push(make_guide_cell(GUIDE_FIXTURES));
 
                         // Fixture cells — or a stub if none exist
                         if let Some(fixtures) = &data.fixtures {
@@ -57,6 +59,7 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
                                 .unwrap_or_else(|_| cell.source_str()),
                             None => cell.source_str(),
                         };
+                        cells.push(make_guide_cell(GUIDE_PATCHED));
                         cells.push(make_patched_source_cell(
                             cell.cell_id_str(),
                             &patched_source,
@@ -67,6 +70,7 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
                             Some(t) => (t.name.clone(), t.source.clone()),
                             None => ("<unnamed>".to_string(), String::new()),
                         };
+                        cells.push(make_guide_cell(GUIDE_TEST));
                         cells.push(make_test_cell(cell.cell_id_str(), &test_name, &test_src));
                     }
                 }
@@ -104,7 +108,29 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
 // Cell constructors
 // ---------------------------------------------------------------------------
 
+const GUIDE_FIXTURES: &str = "### Fixture setup\n\nThe following **code** cells run before the patched notebook cell when tests execute. They prepare variables, mocks, or files that cell needs.\n";
+
+const GUIDE_PATCHED: &str = "### Patched notebook cell\n\nThis is the source notebook cell **after** applying its unified diff (if any). It keeps the **same Jupyter cell ID** as in the original notebook.\n";
+
+const GUIDE_TEST: &str = "### Test\n\nAssertions and `nota_bene.subtest(...)`. The `%%nb_skip` line skips this cell when you **Run all** in the editor; remove it to run the test locally.\n";
+
+const GUIDE_SOURCE_ONLY: &str = "### Source cell\n\nPlain notebook code (no nota-bene metadata on this cell yet). To add fixtures or tests, use the nota-bene workflow and `nota-bene edit --continue`.\n";
+
 const SETUP_SOURCE: &str = "import nota_bene\nnota_bene.register_nb_skip()";
+
+fn make_guide_cell(markdown: &str) -> Cell {
+    let mut meta = blank_cell_metadata();
+    meta.additional.insert(
+        "nota-bene".to_string(),
+        json!({"editor": {"role": "guide"}}),
+    );
+    Cell::Markdown {
+        id: new_cell_id(),
+        metadata: meta,
+        source: split_source(markdown),
+        attachments: None,
+    }
+}
 
 fn make_setup_cell() -> Cell {
     let mut meta = blank_cell_metadata();
@@ -417,14 +443,15 @@ mod tests {
     fn code_cell_without_meta_produces_header_and_passthrough_source() {
         let nb = notebook(vec![code_cell("c1", "x = 1")]);
         let editor = build_editor_notebook(&nb, "test.ipynb").unwrap();
-        // [setup, section-header, source]
-        assert_eq!(editor.cells.len(), 3);
+        // [setup, section-header, guide, source]
+        assert_eq!(editor.cells.len(), 4);
         assert_eq!(
             editor.cells[1].editor_role().as_deref(),
             Some("section-header")
         );
-        assert_eq!(editor.cells[2].editor_role().as_deref(), Some("source"));
-        assert_eq!(editor.cells[2].source_str(), "x = 1");
+        assert_eq!(editor.cells[2].editor_role().as_deref(), Some("guide"));
+        assert_eq!(editor.cells[3].editor_role().as_deref(), Some("source"));
+        assert_eq!(editor.cells[3].source_str(), "x = 1");
     }
 
     #[test]
@@ -447,9 +474,10 @@ mod tests {
         };
         let nb = notebook(vec![cell]);
         let editor = build_editor_notebook(&nb, "test.ipynb").unwrap();
-        // [setup, section-header, stub-fixture, patched-source, test]
-        assert_eq!(editor.cells.len(), 5);
-        assert_eq!(editor.cells[4].editor_role().as_deref(), Some("test"));
+        // [setup, section-header, guide, stub-fixture, guide, patched-source, guide, test]
+        assert_eq!(editor.cells.len(), 8);
+        let last_role = editor.cells.last().and_then(|c| c.editor_role());
+        assert_eq!(last_role.as_deref(), Some("test"));
     }
 
     #[test]

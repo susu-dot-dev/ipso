@@ -77,7 +77,7 @@ For a cell at index N in the source notebook, Rust generates a test notebook wit
 |-------|---------------------------|---------|
 | setup | `setup` | `import nota_bene` |
 | **For each cell 0..N (including target):** | | |
-| &nbsp;&nbsp;fixtures | `fixture` | Wrapped fixture functions, sorted by priority (one cell per fixture) |
+| &nbsp;&nbsp;fixtures | `fixture` | Fixture source, sorted by priority (one cell per fixture) |
 | &nbsp;&nbsp;load + execute | `cell_source` | `nota_bene._runner.load_cell(<patched source>)` then `nota_bene.execute_cell()` |
 | **For the target cell N only:** | | |
 | &nbsp;&nbsp;test | `test` | The test source (subtests, assertions, etc.) |
@@ -91,18 +91,9 @@ Additional metadata on each generated cell:
 - `source_cell_id`: the cell ID in the original notebook this step relates to
 - `fixture_name` (on fixture cells): which fixture is being run
 
-### Fixture wrapping
+### Fixture execution
 
-Fixtures are wrapped in a function to scope their internals, matching the convention in `docs/fixtures.md`:
-
-```python
-def _nb_fixture_{fixture_name}():
-{indented_source}
-
-_nb_fixture_{fixture_name}()
-```
-
-Variables declared `global` inside the fixture source are promoted to the kernel namespace. All other variables remain local.
+Each fixture’s stored `source` is emitted as a single code cell and executed in the kernel user namespace (same as a normal notebook cell). Top-level bindings are visible to the patched cell and to later steps. See `docs/fixtures.md` for scoping details.
 
 ### Diff application
 
@@ -114,6 +105,7 @@ A minimal module (~15 lines) invoked as `python -m nota_bene._executor`:
 
 ```python
 import sys
+
 import nbformat
 from nbclient import NotebookClient
 
@@ -124,6 +116,8 @@ except Exception as e:
     print(f"__NB_EXEC_ERROR__{e}", file=sys.stderr)
 nbformat.write(nb, sys.stdout)
 ```
+
+After execution, Rust sanitizes kernel-originated strings in [`test_runner::extract_results`](../src/test_runner.rs) and `format_error` via `sanitize_kernel_text` (ANSI CSI/OSC and most C0 controls removed; newlines and tabs kept) so JSON stdout stays readable.
 
 Key behaviors:
 
@@ -219,8 +213,8 @@ The test notebook generation (`test_runner.rs`) and the editor notebook generati
 |---------|----------------------------|----------------------------------|
 | **Purpose** | Human editing in Jupyter | Machine execution via nbclient |
 | **Setup cell** | `import nota_bene; nota_bene.register_nb_skip()` | `import nota_bene` |
-| **Section headers** | Markdown cells with staleness, hints | None |
-| **Fixture cells** | Raw source with `# fixture:` / `# description:` / `# priority:` comment headers | Wrapped in `def _nb_fixture_<name>(): ...; _nb_fixture_<name>()` |
+| **Section headers** | Markdown cells with staleness, hints, and optional `guide` labels | None |
+| **Fixture cells** | Raw source with `# fixture:` / `# description:` / `# priority:` comment headers | Same fixture `source` as stored in metadata (one code cell per fixture) |
 | **Stub fixtures** | Emitted for cells with no fixtures (editable placeholder) | Not emitted — nothing to run |
 | **Source cells** | Patched source as editable code cell, preserving original cell ID | `nota_bene._runner.load_cell(<json>)\nnota_bene.execute_cell()` |
 | **Cells without metadata** | Passthrough (original source, editable) | Same `load_cell()` + `execute_cell()` |
@@ -247,7 +241,7 @@ cell 0:  import nota_bene
 for each code cell 0..=target_idx:
     if cell has fixtures (from nota-bene metadata):
         for each fixture sorted by priority:
-            emit cell: def _nb_fixture_{name}():\n{indented_source}\n\n_nb_fixture_{name}()
+            emit cell: {fixture.source as-is}
             metadata: { nota_bene_role: "fixture", source_cell_id, fixture_name }
 
     compute patched_source:

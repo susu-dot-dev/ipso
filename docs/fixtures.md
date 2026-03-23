@@ -86,16 +86,14 @@ This mirrors how a developer would manually run the notebook top-to-bottom, but 
 
 ## Variable Scoping
 
-The runner wraps each fixture's `source` in a generated function before sending it to the kernel. This keeps fixture internals scoped to the function and avoids polluting the kernel's global namespace with intermediate variables.
+The runner executes each fixture's `source` as a normal code cell in the test kernel (same namespace as the patched notebook cells). Top-level assignments and `def` statements are visible to the patched cell for that step and to all later cells in the cumulative test run.
 
-To make a value available to the cell code or subsequent fixtures, the fixture explicitly declares it with `global`:
+You do **not** need `global` for ordinary names you want the cell under test to see:
 
 ```python
 # fixture source for "load_small_csv":
 import tempfile
 import os
-
-global csv_name
 
 tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".csv", delete=False)
 with open("huge_file.csv") as f:
@@ -110,18 +108,11 @@ csv_name = tmp.name
 nota_bene.register_teardown(lambda: os.unlink(tmp.name))
 ```
 
-After the fixture runs, `csv_name` is in the kernel's global namespace and available to the patched cell code and any subsequent fixtures.
+After the fixture runs, `csv_name` (and any other names you assign at the top level) remain in the kernel namespace for patched cell code and subsequent fixtures.
 
-Functions work the same way — declaring a function `global` puts it into the kernel namespace:
+**Namespace hygiene:** Unlike a function wrapper, temporary names (e.g. `tmp`) also stay in the kernel until overwritten or the kernel exits. Use `del`, narrow scopes with small helpers, or accept leftover names if harmless.
 
-```python
-global normalize_row
-
-def normalize_row(row):
-    return row.strip().lower()
-```
-
-Any variable or function not declared `global` remains local to the fixture function and is discarded after the fixture runs. This is intentional — fixtures should be explicit about what they expose.
+You can still use `global` when you need to assign into an outer scope from inside a nested function (same rules as ordinary Python).
 
 ## Teardown
 
@@ -170,9 +161,9 @@ df["quantity"] = [2] * len(df)
 ### What the runner executes
 
 ```
-[cell 1] wrap load_small_csv in function → call → csv_name hoisted to globals via global declaration
+[cell 1] run fixture load_small_csv (as a code cell)
 [cell 1] run patched cell 1: df = pd.read_csv(csv_name)
-[cell 2] wrap mock_columns in function → call
+[cell 2] run fixture mock_columns (as a code cell)
 [cell 2] run patched cell 2: df["total"] = df["price"] * df["quantity"]
 [cell 3] no fixtures
 [cell 3] run cell 3: df.plot(...)
@@ -205,9 +196,9 @@ Teardown fires in reverse order of registration. `load_small_csv` registered its
 
 #### `fixture_name`
 
-A non-empty string. Fixture names must be **globally unique across all cells in the notebook** — not just within the cell that defines them. This is because all fixtures run in the same kernel namespace and share the same function name prefix. If a conflict arises, the convention is to append the cell ID: `load_small_csv_abc123`.
+A non-empty string. Fixture names must be **globally unique across all cells in the notebook** — not just within the cell that defines them — so errors and tooling can refer to a single fixture unambiguously. If a conflict arises, the convention is to append the cell ID: `load_small_csv_abc123`.
 
-Valid characters: letters, digits, and underscores. Must be a valid Python identifier (it is used as a function name in the wrapping algorithm below).
+Valid characters: letters, digits, and underscores. Using a valid Python identifier is recommended for consistency with editor tooling and generated labels.
 
 #### `description`
 
@@ -233,29 +224,20 @@ Example:
 ]
 ```
 
-The runner joins the array with `""` before wrapping — no separator is needed since each line already includes its trailing `\n`.
+The runner joins the array with `""` before execution — no separator is needed since each line already includes its trailing `\n`.
 
-The source may use `global` declarations to promote variables into the kernel namespace. It may call `nota_bene.register_teardown(callback)` to register cleanup. It must not rely on any state other than what has already been established by prior fixtures or prior cells in the cumulative execution chain.
+The source runs at the top level of the kernel user namespace. It may call `nota_bene.register_teardown(callback)` to register cleanup. It must not rely on any state other than what has already been established by prior fixtures or prior cells in the cumulative execution chain.
 
-### Fixture wrapping algorithm
+### Fixture execution
 
-The runner generates the following code for each fixture and sends it as a single `execute_request` to the kernel:
-
-```python
-def _nb_fixture_{fixture_name}():
-{indented_source}
-
-_nb_fixture_{fixture_name}()
-```
-
-Where `{indented_source}` is the fixture `source` with every line indented by 4 spaces. The `global` declarations inside the source promote the named variables into the kernel's global namespace automatically — no return value handling or additional hoisting is required.
+For each fixture, the runner sends the fixture `source` string as a single `execute_request` to the kernel (one notebook code cell in the generated test notebook), with runner metadata recording `fixture_name` for error reporting.
 
 ### Execution order algorithm
 
 For each cell in notebook order (1 through N):
 1. Collect the cell's fixtures into a list
 2. Sort by `priority` ascending (stable sort — equal priorities preserve definition order)
-3. For each fixture, generate the wrapped source and send as an `execute_request` to the kernel
+3. For each fixture, send the fixture `source` as an `execute_request` to the kernel
 4. Execute the cell's patched source, or unpatched source if no diff exists
 
 For cell N only:
