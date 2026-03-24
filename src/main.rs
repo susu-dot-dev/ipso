@@ -58,8 +58,9 @@ enum Command {
         /// combine with AND.  Comma-separated values within a single expr
         /// combine with OR.
         ///
-        /// Available filter keys:
+        /// Run `nota-bene docs filters` for full syntax and examples.
         ///
+        /// Quick reference:
         ///   cell:<id>[,<id>...]          Match specific cell IDs
         ///   index:<n|n..m|n..|..m>       Match by 0-based position
         ///   test:<null|not null>          Test absent or present
@@ -72,12 +73,6 @@ enum Command {
         ///                                  invalid_field)
         ///   diagnostics.severity:<level>  Has a diagnostic of this severity
         ///                                 (error, warning)
-        ///
-        /// Examples:
-        ///   --filter "cell:compute-total"
-        ///   --filter "index:2..4"
-        ///   --filter "diagnostics.type:needs_review,diff_conflict"
-        ///   --filter "status.valid:false" --filter "test:null"
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
         /// Comma-separated list of fields to include in each cell object.
@@ -110,6 +105,7 @@ enum Command {
         #[arg(long)]
         stdin: bool,
         /// Additional filters applied before the status.valid:false check.
+        /// Run `nota-bene docs filters` for full syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
     },
@@ -124,6 +120,7 @@ enum Command {
         #[arg(long)]
         all: bool,
         /// Filter which cells to accept.
+        /// Run `nota-bene docs filters` for full syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
     },
@@ -136,6 +133,7 @@ enum Command {
         path: PathBuf,
         /// Filter which cells to test (same syntax as view/accept).
         /// If omitted, all cells with tests are run.
+        /// Run `nota-bene docs filters` for full filter syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
         /// Python binary to use (default: "python" from PATH).
@@ -144,6 +142,17 @@ enum Command {
         /// Per-cell execution timeout in seconds.
         #[arg(long, default_value_t = 60)]
         timeout: u64,
+    },
+    /// Print detailed reference documentation for a topic.
+    ///
+    /// Available topics:
+    ///   filters    Filter syntax for --filter flags used in view, status, accept, and test
+    ///
+    /// Run with no topic to list all available topics.
+    #[command(name = "docs")]
+    Docs {
+        /// Topic to display documentation for (e.g. "filters").
+        topic: Option<String>,
     },
 }
 
@@ -232,6 +241,7 @@ fn main() -> Result<()> {
             python,
             timeout,
         }) => run_test(path, filters, python, timeout),
+        Some(Command::Docs { topic }) => run_docs(topic),
     }
 }
 /// Derive the editor notebook path from the source path.
@@ -575,6 +585,173 @@ fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+fn run_docs(topic: Option<String>) -> Result<()> {
+    match topic.as_deref() {
+        None => {
+            println!("{}", DOCS_TOPICS);
+            Ok(())
+        }
+        Some("filters") => {
+            println!("{}", DOCS_FILTERS);
+            Ok(())
+        }
+        Some(other) => {
+            bail!(
+                "Unknown help topic: `{}`\n\nAvailable topics:\n{}",
+                other,
+                DOCS_TOPICS
+            )
+        }
+    }
+}
+
+const DOCS_TOPICS: &str = "\
+Available help topics:
+
+  filters    Filter syntax for --filter flags (view, status, accept, test)
+
+Usage:
+  nota-bene docs <topic>
+
+Example:
+  nota-bene docs filters";
+
+const DOCS_FILTERS: &str = "\
+# Filter Syntax
+
+The --filter flag is supported by the view, status, accept, and test commands.
+Filters select which cells a command operates on.
+
+## General syntax
+
+  --filter \"<key>:<expr>\"
+
+Multiple --filter flags combine with AND (all must match).
+Comma-separated values within a single expr combine with OR (any may match).
+
+
+## Filter keys
+
+### cell:<id>[,<id>,...]
+Match cells by their notebook cell ID (the `id` field in the .ipynb format).
+
+  --filter \"cell:abc123\"
+  --filter \"cell:abc123,def456\"        # either cell
+
+
+### index:<expr>
+Match cells by 0-based position in the notebook.
+
+  --filter \"index:0\"                   # first cell only
+  --filter \"index:2\"                   # third cell
+  --filter \"index:1..3\"                # cells 1 and 2 (exclusive upper bound)
+  --filter \"index:2..\"                 # cells 2 onwards
+  --filter \"index:..4\"                 # cells 0 through 3
+
+
+### test:<null|not_null>
+Match cells based on whether a test is present.
+
+  --filter \"test:not_null\"             # cells that have a test
+  --filter \"test:null\"                 # cells with no test
+
+
+### fixtures:<null|not_null>
+Match cells based on whether fixtures are present.
+
+  --filter \"fixtures:not_null\"         # cells that have at least one fixture
+  --filter \"fixtures:null\"             # cells with no fixtures
+
+
+### diff:<null|not_null>
+Match cells based on whether a diff is present.
+
+  --filter \"diff:not_null\"             # cells that have a diff
+  --filter \"diff:null\"                 # cells with no diff
+
+
+### status.valid:<true|false>
+Match cells by their overall validity (all diagnostics clear = valid).
+
+  --filter \"status.valid:false\"        # all invalid cells (used by `nb status`)
+  --filter \"status.valid:true\"         # only fully valid cells
+
+
+### diagnostics.type:<type>[,<type>,...]
+Match cells that have at least one diagnostic of the given type.
+
+Valid types:
+  missing             Code cell with no nota-bene metadata, or metadata present
+                      but SHA snapshot never recorded (never accepted)
+  needs_review        Cell source or metadata changed since last accept
+  ancestor_modified   A preceding cell was modified, inserted, deleted, or reordered
+  diff_conflict       Stored diff no longer applies cleanly to the current source
+  invalid_field       A nota-bene metadata field has a validation error
+
+  --filter \"diagnostics.type:missing\"
+  --filter \"diagnostics.type:needs_review,ancestor_modified\"   # either type
+
+
+### diagnostics.severity:<error|warning>
+Match cells that have at least one diagnostic of the given severity.
+
+Severity levels:
+  error      missing, diff_conflict, invalid_field
+  warning    needs_review, ancestor_modified
+
+  --filter \"diagnostics.severity:error\"
+  --filter \"diagnostics.severity:warning\"
+
+
+## Combining filters
+
+Multiple --filter flags are ANDed together — a cell must satisfy all of them.
+
+  # Invalid cells that have a test defined:
+  --filter \"status.valid:false\" --filter \"test:not_null\"
+
+  # Cells 0 through 4 that have a diff conflict:
+  --filter \"index:..5\" --filter \"diagnostics.type:diff_conflict\"
+
+  # A specific cell by ID:
+  --filter \"cell:abc123\"
+
+
+## Examples
+
+View all invalid cells:
+  nota-bene view notebook.ipynb --filter \"status.valid:false\"
+
+Accept a single cell by ID:
+  nota-bene accept notebook.ipynb --filter \"cell:abc123\"
+
+Run tests only for cells with a needs_review diagnostic:
+  nota-bene test notebook.ipynb --filter \"diagnostics.type:needs_review\"
+
+View cells that have fixtures but no test:
+  nota-bene view notebook.ipynb --filter \"fixtures:not_null\" --filter \"test:null\"
+
+View cells 2 through 5 that have any error-severity diagnostic:
+  nota-bene view notebook.ipynb --filter \"index:2..6\" --filter \"diagnostics.severity:error\"
+
+View the first three cells that have never been accepted:
+  nota-bene view notebook.ipynb --filter \"index:..3\" --filter \"diagnostics.type:missing\"
+
+
+## Notes
+
+- Filters apply only to code cells. Markdown and raw cells are always excluded.
+- Cell IDs are stable UUIDs assigned by the notebook format; they do not change
+  when cells are reordered.
+- The status.valid filter is implicit in `nota-bene status` (it always adds
+  status.valid:false automatically).
+- For AI agents: use --filter \"cell:<id>\" to target a specific cell returned
+  by the `repair_nota_bene` MCP tool.";
+
 /// `nota-bene scaffold fixture|test`: generate JSON fragments.
 fn run_scaffold(cmd: ScaffoldCommand) -> Result<()> {
     let json = match cmd {
@@ -666,7 +843,7 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
             let python = python.clone();
             let timeout_str = timeout.to_string();
             std::thread::spawn(move || -> (String, String, test_runner::CellTestResult) {
-                let result = run_executor_subprocess(
+                let result = test_runner::run_executor_subprocess(
                     &python,
                     &timeout_str,
                     &test_nb_json,
@@ -700,83 +877,4 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
     }
 
     Ok(())
-}
-
-/// Spawn the Python executor subprocess, pipe the test notebook to stdin,
-/// collect stdout, and extract results.
-fn run_executor_subprocess(
-    python: &str,
-    timeout_str: &str,
-    test_nb_json: &str,
-    cell_id: &str,
-    test_name: &str,
-) -> test_runner::CellTestResult {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    let mut child = match Command::new(python)
-        .args(["-m", "nota_bene._executor", timeout_str])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return test_runner::executor_error_result(
-                cell_id,
-                test_name,
-                &format!("Failed to spawn executor: {e}"),
-            );
-        }
-    };
-
-    // Write notebook JSON to stdin, then close it.
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(test_nb_json.as_bytes()) {
-            return test_runner::executor_error_result(
-                cell_id,
-                test_name,
-                &format!("Failed to write to executor stdin: {e}"),
-            );
-        }
-    }
-
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            return test_runner::executor_error_result(
-                cell_id,
-                test_name,
-                &format!("Failed to wait for executor: {e}"),
-            );
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if !output.status.success() {
-        let detail = if let Some(msg) = stderr.strip_prefix("__NB_EXEC_ERROR__") {
-            format!("Executor error: {}", msg.trim())
-        } else if !stderr.is_empty() {
-            format!(
-                "Executor failed ({}). stderr: {}",
-                output.status,
-                stderr.trim()
-            )
-        } else {
-            format!("Executor failed ({})", output.status)
-        };
-        return test_runner::executor_error_result(cell_id, test_name, &detail);
-    }
-
-    match test_runner::parse_executed_notebook(&stdout) {
-        Ok(executed_nb) => test_runner::extract_results(&executed_nb, cell_id, test_name),
-        Err(e) => test_runner::executor_error_result(
-            cell_id,
-            test_name,
-            &format!("Failed to parse executed notebook: {e}"),
-        ),
-    }
 }
