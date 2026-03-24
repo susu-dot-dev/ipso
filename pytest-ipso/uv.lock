@@ -247,7 +247,7 @@ wheels = [
 
 [[package]]
 name = "ipso"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "../ipso" }
 dependencies = [
     { name = "ipykernel" },
@@ -713,7 +713,7 @@ wheels = [
 
 [[package]]
 name = "pytest-ipso"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "ipso" },
