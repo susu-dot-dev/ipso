@@ -116,7 +116,7 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
     for entry in stored_shas.iter() {
         if !current_id_set.contains(entry.cell_id.as_str()) {
             result.ancestor_modified.push(format!(
-                "Cell `{}` was deleted from the notebook after this cell was last accepted. Re-run `nb accept` to update the baseline.",
+                "Cell `{}` was deleted from the notebook after this cell was last accepted. Re-run `ipso accept` to update the baseline.",
                 entry.cell_id
             ));
         }
@@ -128,7 +128,7 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
         for id in &current_ids[..target_pos] {
             if !stored_id_set.contains(id) {
                 result.ancestor_modified.push(format!(
-                    "Cell `{}` was inserted before this cell after it was last accepted. Re-run `nb accept` to update the baseline.",
+                    "Cell `{}` was inserted before this cell after it was last accepted. Re-run `ipso accept` to update the baseline.",
                     id
                 ));
             }
@@ -149,7 +149,7 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
     if stored_existing != current_existing {
         result
             .ancestor_modified
-            .push("Cells were reordered since this cell was last accepted. Re-run `nb accept` to update the baseline.".to_string());
+            .push("Cells were reordered since this cell was last accepted. Re-run `ipso accept` to update the baseline.".to_string());
     }
 
     let current_sha = compute_cell_sha(cell);
@@ -157,7 +157,7 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
         if stored.sha != current_sha {
             result
                 .needs_review
-                .push("This cell's source or metadata changed since it was last accepted. Review the changes and run `nb accept` to re-baseline.".to_string());
+                .push("This cell's source or metadata changed since it was last accepted. Review the changes and run `ipso accept` to re-baseline.".to_string());
         }
     }
 
@@ -169,7 +169,7 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
             {
                 if stored_entry.sha != current_entry.sha {
                     result.ancestor_modified.push(format!(
-                        "Cell `{}` (which this cell depends on) was modified since this cell was last accepted. Check whether the changes affect this cell's tests, then run `nb accept`.",
+                        "Cell `{}` (which this cell depends on) was modified since this cell was last accepted. Check whether the changes affect this cell's tests, then run `ipso accept`.",
                         current_entry.cell_id
                     ));
                 }
