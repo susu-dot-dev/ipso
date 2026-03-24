@@ -154,6 +154,20 @@ enum Command {
         /// Topic to display documentation for (e.g. "filters").
         topic: Option<String>,
     },
+    /// Upgrade a notebook to nbformat 4.5 by assigning stable cell IDs.
+    ///
+    /// Writes the upgraded notebook in-place.  With --stdin, reads from stdin
+    /// and writes the result to stdout instead.
+    Upgrade {
+        /// Path to the .ipynb file to upgrade.
+        path: PathBuf,
+        /// Read notebook from stdin; write upgraded notebook to stdout.
+        #[arg(long)]
+        stdin: bool,
+        /// Show what would change without modifying the file.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -242,6 +256,11 @@ fn main() -> Result<()> {
             timeout,
         }) => run_test(path, filters, python, timeout),
         Some(Command::Docs { topic }) => run_docs(topic),
+        Some(Command::Upgrade {
+            path,
+            stdin,
+            dry_run,
+        }) => run_upgrade(path, stdin, dry_run),
     }
 }
 /// Derive the editor notebook path from the source path.
@@ -874,6 +893,97 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
         std::process::exit(2);
     } else if !all_passed {
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ipso upgrade
+// ---------------------------------------------------------------------------
+
+fn run_upgrade(path: PathBuf, stdin: bool, dry_run: bool) -> Result<()> {
+    use std::collections::HashSet;
+    use std::io::Read;
+
+    let path_hint = path.display().to_string();
+
+    // Load raw content.
+    let content = if stdin {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("reading notebook from stdin")?;
+        buf
+    } else {
+        std::fs::read_to_string(&path).with_context(|| format!("reading notebook {path_hint}"))?
+    };
+
+    // Parse — we deliberately bypass load_notebook here so we can handle
+    // legacy formats.
+    let versioned = nbformat::parse_notebook(&content)
+        .with_context(|| format!("parsing notebook {path_hint}"))?;
+
+    let mut nb = match versioned {
+        nbformat::Notebook::V4(_) => {
+            eprintln!("{path_hint} is already nbformat 4.5, nothing to do.");
+            return Ok(());
+        }
+        nbformat::Notebook::Legacy(nb) => nbformat::upgrade_legacy_notebook(nb)
+            .with_context(|| format!("upgrading legacy notebook {path_hint}"))?,
+        nbformat::Notebook::V3(nb) => nbformat::upgrade_v3_notebook(nb)
+            .with_context(|| format!("upgrading v3 notebook {path_hint}"))?,
+    };
+
+    // Post-process cell IDs: prefer _cell_guid from metadata when valid.
+    let mut used_ids: HashSet<String> = HashSet::new();
+    let mut guid_count: usize = 0;
+    let mut generated_count: usize = 0;
+
+    for cell in nb.cells.iter_mut() {
+        // Try to read _cell_guid from metadata.
+        let guid_candidate: Option<String> = cell
+            .additional()
+            .get("_cell_guid")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let chosen_id = guid_candidate
+            .as_deref()
+            .and_then(|g| nbformat::v4::CellId::new(g).ok())
+            .filter(|id| !used_ids.contains(id.as_str()));
+
+        if let Some(id) = chosen_id {
+            used_ids.insert(id.as_str().to_string());
+            // Replace the generated UUID with the _cell_guid value.
+            match cell {
+                nbformat::v4::Cell::Code { id: cell_id, .. } => *cell_id = id,
+                nbformat::v4::Cell::Markdown { id: cell_id, .. } => *cell_id = id,
+                nbformat::v4::Cell::Raw { id: cell_id, .. } => *cell_id = id,
+            }
+            guid_count += 1;
+        } else {
+            used_ids.insert(cell.cell_id_str().to_string());
+            generated_count += 1;
+        }
+    }
+
+    nb.nbformat_minor = 5;
+
+    let json = nbformat::serialize_notebook(&nbformat::Notebook::V4(nb))
+        .context("serializing upgraded notebook")?;
+
+    let summary = format!(
+        "Upgraded {path_hint}: {guid_count} IDs from _cell_guid, {generated_count} generated."
+    );
+
+    if stdin || dry_run {
+        println!("{json}");
+        eprintln!("{summary}");
+    } else {
+        std::fs::write(&path, &json)
+            .with_context(|| format!("writing upgraded notebook {path_hint}"))?;
+        eprintln!("{summary}");
     }
 
     Ok(())

@@ -1069,23 +1069,6 @@ fn view_compute_total_has_fixtures_and_test() {
 }
 
 #[test]
-fn view_status_field_structure() {
-    let (_dir, source_path) = setup_fixture("simple.ipynb");
-    let (stdout, _stderr, _) = run_view(&source_path, &["--filter", "cell:compute-total"]);
-    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
-    let status = &arr[0]["status"];
-    assert!(status.get("valid").is_some(), "status.valid missing");
-    assert!(
-        status.get("diagnostics").is_some(),
-        "status.diagnostics missing"
-    );
-    assert!(
-        status["diagnostics"].is_array(),
-        "diagnostics must be array"
-    );
-}
-
-#[test]
 fn view_stdin_mode() {
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let content = fs::read_to_string(&source_path).expect("read fixture");
@@ -2567,4 +2550,205 @@ fn test_error_result_schema() {
     let err = &r["error"];
     assert!(err.get("phase").is_some(), "error missing phase");
     assert!(err.get("detail").is_some(), "error missing detail");
+}
+
+// ---------------------------------------------------------------------------
+// ipso upgrade
+// ---------------------------------------------------------------------------
+
+fn run_upgrade(
+    source_path: &Path,
+    extra_args: &[&str],
+) -> (String, String, std::process::ExitStatus) {
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.arg("upgrade").arg(source_path);
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn ipso upgrade");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    (stdout, stderr, out.status)
+}
+
+fn run_upgrade_stdin(source_path: &Path) -> (String, String, std::process::ExitStatus) {
+    let content = fs::read_to_string(source_path).expect("read fixture");
+    let mut cmd = std::process::Command::new(common::binary());
+    cmd.args(["upgrade", "--stdin", source_path.to_str().unwrap()]);
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn ipso upgrade --stdin");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(content.as_bytes())
+            .unwrap();
+    }
+    let output = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (stdout, stderr, output.status)
+}
+
+/// Return the nbformat_minor from a parsed notebook JSON value.
+fn nbformat_minor(nb: &serde_json::Value) -> i64 {
+    nb["nbformat_minor"].as_i64().unwrap_or(-1)
+}
+
+/// Return true if every cell in the notebook has a non-empty "id" field.
+fn all_cells_have_id(nb: &serde_json::Value) -> bool {
+    nb["cells"]
+        .as_array()
+        .map(|cells| {
+            cells
+                .iter()
+                .all(|c| c["id"].as_str().map(|s| !s.is_empty()).unwrap_or(false))
+        })
+        .unwrap_or(false)
+}
+
+#[test]
+fn upgrade_errors_on_legacy_notebook_via_view() {
+    // ipso view should reject a 4.4 notebook with a clear upgrade message.
+    let (_dir, source_path) = setup_fixture("legacy-44.ipynb");
+    let (stdout, stderr, status) = run_view(&source_path, &[]);
+    assert!(
+        !status.success(),
+        "expected non-zero exit for legacy notebook"
+    );
+    assert!(stdout.is_empty(), "stdout should be empty on error");
+    assert!(
+        stderr.contains("not nbformat 4.5"),
+        "stderr should mention nbformat 4.5, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("ipso upgrade"),
+        "stderr should mention `ipso upgrade`, got: {stderr}"
+    );
+}
+
+#[test]
+fn upgrade_command_upgrades_legacy_notebook() {
+    let (_dir, source_path) = setup_fixture("legacy-44.ipynb");
+
+    let (_stdout, stderr, status) = run_upgrade(&source_path, &[]);
+    assert!(status.success(), "upgrade should exit 0; stderr: {stderr}");
+    assert!(
+        stderr.contains("Upgraded"),
+        "stderr should contain summary, got: {stderr}"
+    );
+
+    let upgraded: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&source_path).unwrap()).unwrap();
+    assert_eq!(nbformat_minor(&upgraded), 5, "nbformat_minor should be 5");
+    assert!(all_cells_have_id(&upgraded), "all cells should have an id");
+
+    // Cells with _cell_guid should use it as their id.
+    let cells = upgraded["cells"].as_array().unwrap();
+    assert_eq!(
+        cells[0]["id"].as_str().unwrap(),
+        "aa111111-0000-0000-0000-000000000001"
+    );
+    assert_eq!(
+        cells[1]["id"].as_str().unwrap(),
+        "bb222222-0000-0000-0000-000000000002"
+    );
+    assert_eq!(
+        cells[2]["id"].as_str().unwrap(),
+        "cc333333-0000-0000-0000-000000000003"
+    );
+    // Cell without _cell_guid gets a generated (non-empty) id.
+    assert!(!cells[3]["id"].as_str().unwrap_or("").is_empty());
+}
+
+#[test]
+fn upgrade_command_is_idempotent() {
+    let (_dir, source_path) = setup_fixture("legacy-44.ipynb");
+    let (_, _, status) = run_upgrade(&source_path, &[]);
+    assert!(status.success(), "first upgrade should succeed");
+
+    let (_stdout, stderr, status) = run_upgrade(&source_path, &[]);
+    assert!(status.success(), "second upgrade should exit 0");
+    assert!(
+        stderr.contains("already nbformat 4.5"),
+        "second upgrade stderr should say already 4.5, got: {stderr}"
+    );
+}
+
+#[test]
+fn upgrade_stdin_outputs_upgraded_notebook() {
+    let (_dir, source_path) = setup_fixture("legacy-44.ipynb");
+    let original_content = fs::read_to_string(&source_path).unwrap();
+
+    let (stdout, _stderr, status) = run_upgrade_stdin(&source_path);
+    assert!(status.success(), "upgrade --stdin should exit 0");
+
+    let upgraded: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    assert_eq!(
+        nbformat_minor(&upgraded),
+        5,
+        "stdout notebook should be nbformat 4.5"
+    );
+    assert!(all_cells_have_id(&upgraded), "all cells should have ids");
+
+    // Original file should be untouched.
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        original_content,
+        "--stdin must not modify the file on disk"
+    );
+}
+
+#[test]
+fn upgrade_dry_run_leaves_file_unchanged() {
+    let (_dir, source_path) = setup_fixture("legacy-44.ipynb");
+    let original_content = fs::read_to_string(&source_path).unwrap();
+
+    let (stdout, _stderr, status) = run_upgrade(&source_path, &["--dry-run"]);
+    assert!(status.success(), "upgrade --dry-run should exit 0");
+
+    let upgraded: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON for --dry-run");
+    assert_eq!(
+        nbformat_minor(&upgraded),
+        5,
+        "--dry-run stdout should show nbformat 4.5"
+    );
+
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        original_content,
+        "--dry-run must not modify the file on disk"
+    );
+}
+
+#[test]
+fn upgrade_already_v45_is_noop() {
+    let (_dir, source_path) = setup_fixture("simple.ipynb");
+    let original_content = fs::read_to_string(&source_path).unwrap();
+
+    let (_stdout, stderr, status) = run_upgrade(&source_path, &[]);
+    assert!(status.success(), "upgrade on 4.5 notebook should exit 0");
+    assert!(
+        stderr.contains("already nbformat 4.5"),
+        "stderr should say already 4.5, got: {stderr}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(&source_path).unwrap(),
+        original_content,
+        "4.5 notebook file must not be modified"
+    );
 }

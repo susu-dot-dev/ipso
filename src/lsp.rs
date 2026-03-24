@@ -129,7 +129,32 @@ fn compute_lsp_diagnostics(
     text: &str,
     cell_cache: &mut LruCache<String, Vec<Diagnostic>>,
 ) -> Option<Vec<lsp_types::Diagnostic>> {
-    let nb: nbformat::v4::Notebook = serde_json::from_str(text).ok()?;
+    let versioned = nbformat::parse_notebook(text).ok()?;
+    let nb = match versioned {
+        nbformat::Notebook::V4(nb) => nb,
+        nbformat::Notebook::Legacy(_) | nbformat::Notebook::V3(_) => {
+            let diag = lsp_types::Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                code: Some(lsp_types::NumberOrString::String("upgrade_required".into())),
+                source: Some("ipso".into()),
+                message: "Notebook is not nbformat 4.5. \
+                    Run `ipso upgrade <path>` to add stable cell IDs."
+                    .into(),
+                ..Default::default()
+            };
+            return Some(vec![diag]);
+        }
+    };
 
     let line_index = LineIndex::new(text);
     let mut all_lsp: Vec<lsp_types::Diagnostic> = Vec::new();

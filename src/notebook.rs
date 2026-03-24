@@ -91,32 +91,42 @@ impl CellExt for Cell {
 // ---------------------------------------------------------------------------
 
 /// Parse a notebook from an already-loaded string.  Used for `--stdin` mode.
+///
+/// Only nbformat 4.5 notebooks are accepted.  Older notebooks must be
+/// upgraded first with `ipso upgrade`.
 pub fn load_notebook_from_str(content: &str, path_hint: &str) -> Result<Notebook> {
     let versioned = nbformat::parse_notebook(content)
         .with_context(|| format!("parsing notebook {path_hint}"))?;
-    let nb = match versioned {
-        nbformat::Notebook::V4(nb) => nb,
-        nbformat::Notebook::Legacy(nb) => nbformat::upgrade_legacy_notebook(nb)
-            .with_context(|| format!("upgrading legacy notebook {path_hint}"))?,
-        nbformat::Notebook::V3(nb) => nbformat::upgrade_v3_notebook(nb)
-            .with_context(|| format!("upgrading v3 notebook {path_hint}"))?,
-    };
-    Ok(nb)
+    match versioned {
+        nbformat::Notebook::V4(nb) => Ok(nb),
+        nbformat::Notebook::Legacy(_) | nbformat::Notebook::V3(_) => {
+            anyhow::bail!(
+                "notebook \"{path_hint}\" is not nbformat 4.5.\n\
+                 Run `ipso upgrade {path_hint}` to add stable cell IDs."
+            )
+        }
+    }
 }
 
+/// Load a notebook from a file path.
+///
+/// Only nbformat 4.5 notebooks are accepted.  Older notebooks must be
+/// upgraded first with `ipso upgrade`.
 pub fn load_notebook(path: &Path) -> Result<Notebook> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("reading notebook {}", path.display()))?;
+    let path_hint = path.display().to_string();
     let versioned = nbformat::parse_notebook(&content)
-        .with_context(|| format!("parsing notebook {}", path.display()))?;
-    let nb = match versioned {
-        nbformat::Notebook::V4(nb) => nb,
-        nbformat::Notebook::Legacy(nb) => nbformat::upgrade_legacy_notebook(nb)
-            .with_context(|| format!("upgrading legacy notebook {}", path.display()))?,
-        nbformat::Notebook::V3(nb) => nbformat::upgrade_v3_notebook(nb)
-            .with_context(|| format!("upgrading v3 notebook {}", path.display()))?,
-    };
-    Ok(nb)
+        .with_context(|| format!("parsing notebook {path_hint}"))?;
+    match versioned {
+        nbformat::Notebook::V4(nb) => Ok(nb),
+        nbformat::Notebook::Legacy(_) | nbformat::Notebook::V3(_) => {
+            anyhow::bail!(
+                "notebook \"{path_hint}\" is not nbformat 4.5.\n\
+                 Run `ipso upgrade {path_hint}` to add stable cell IDs."
+            )
+        }
+    }
 }
 
 pub fn save_notebook(nb: &Notebook, path: &Path) -> Result<()> {
