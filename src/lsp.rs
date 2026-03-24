@@ -47,7 +47,7 @@ impl LanguageServer for LspBackend {
 
     async fn initialized(&self, _params: InitializedParams) {
         // Ask the editor to notify us when .ipynb files change on disk
-        // (e.g. after `nb accept` modifies the file externally).
+        // (e.g. after `ipso accept` modifies the file externally).
         let registration = Registration {
             id: "nb-ipynb-watcher".to_string(),
             method: "workspace/didChangeWatchedFiles".to_string(),

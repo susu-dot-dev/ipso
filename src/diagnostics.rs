@@ -106,7 +106,7 @@ pub fn compute_state_diagnostics(
             diagnostics.push(Diagnostic {
                 r#type: DiagnosticType::Missing,
                 severity: Severity::Error,
-                message: "This cell has no tests or fixtures. Add fixtures and a test, then run `nb accept` to baseline it.".to_string(),
+                message: "This cell has no tests or fixtures. Use the `repair_ipso` MCP tool for guided setup, or run `ipso update` to add fixtures and a test, then `ipso accept` to baseline it.".to_string(),
                 field: "shas".to_string(),
             });
         }
