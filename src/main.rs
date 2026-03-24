@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use notebook::{load_notebook, load_notebook_from_str, save_notebook, CellExt};
 
 #[derive(Parser)]
-#[command(name = "nota-bene", version = env!("CARGO_PKG_VERSION"))]
+#[command(name = "ipso", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -42,7 +42,7 @@ enum Command {
         /// Discard the editor notebook and recreate it fresh from the source.
         #[arg(long)]
         clean: bool,
-        /// (With --continue) Skip conflict detection; strip all nota-bene metadata
+        /// (With --continue) Skip conflict detection; strip all ipso metadata
         /// from source before applying.
         #[arg(long)]
         force: bool,
@@ -58,7 +58,7 @@ enum Command {
         /// combine with AND.  Comma-separated values within a single expr
         /// combine with OR.
         ///
-        /// Run `nota-bene docs filters` for full syntax and examples.
+        /// Run `ipso docs filters` for full syntax and examples.
         ///
         /// Quick reference:
         ///   cell:<id>[,<id>...]          Match specific cell IDs
@@ -105,7 +105,7 @@ enum Command {
         #[arg(long)]
         stdin: bool,
         /// Additional filters applied before the status.valid:false check.
-        /// Run `nota-bene docs filters` for full syntax and examples.
+        /// Run `ipso docs filters` for full syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
     },
@@ -120,7 +120,7 @@ enum Command {
         #[arg(long)]
         all: bool,
         /// Filter which cells to accept.
-        /// Run `nota-bene docs filters` for full syntax and examples.
+        /// Run `ipso docs filters` for full syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
     },
@@ -133,7 +133,7 @@ enum Command {
         path: PathBuf,
         /// Filter which cells to test (same syntax as view/accept).
         /// If omitted, all cells with tests are run.
-        /// Run `nota-bene docs filters` for full filter syntax and examples.
+        /// Run `ipso docs filters` for full filter syntax and examples.
         #[arg(long = "filter", verbatim_doc_comment)]
         filters: Vec<String>,
         /// Python binary to use (default: "python" from PATH).
@@ -250,14 +250,14 @@ fn editor_path(source_path: &Path) -> Result<PathBuf> {
         .file_stem()
         .context("source path has no file stem")?
         .to_string_lossy();
-    let editor_name = format!("{}.nota-bene.ipynb", stem);
+    let editor_name = format!("{}.ipso.ipynb", stem);
     Ok(source_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(editor_name))
 }
 
-/// `nota-bene edit <path>`: create the editor notebook and exit.
+/// `ipso edit <path>`: create the editor notebook and exit.
 fn run_edit(source_path: PathBuf) -> Result<()> {
     let editor_path = editor_path(&source_path)?;
 
@@ -266,8 +266,8 @@ fn run_edit(source_path: PathBuf) -> Result<()> {
         let source_display = source_path.display();
         bail!(
             "Editor notebook already exists: {editor_display}\n\
-             Use `nota-bene edit --continue {source_display}` to apply your changes, or\n     \
-                 `nota-bene edit --clean {source_display}` to discard it and start fresh."
+             Use `ipso edit --continue {source_display}` to apply your changes, or\n     \
+                 `ipso edit --clean {source_display}` to discard it and start fresh."
         );
     }
 
@@ -287,14 +287,14 @@ fn run_edit(source_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// `nota-bene edit --continue <path>`: apply editor notebook changes back to source.
+/// `ipso edit --continue <path>`: apply editor notebook changes back to source.
 fn run_edit_continue(source_path: PathBuf, force: bool) -> Result<()> {
     let editor_path = editor_path(&source_path)?;
 
     if !editor_path.exists() {
         bail!(
             "Editor notebook not found: {}\n\
-             Run `nota-bene edit {}` first to create it.",
+             Run `ipso edit {}` first to create it.",
             editor_path.display(),
             source_path.display()
         );
@@ -307,9 +307,9 @@ fn run_edit_continue(source_path: PathBuf, force: bool) -> Result<()> {
         .with_context(|| format!("loading editor notebook {}", editor_path.display()))?;
 
     if force {
-        // Strip all nota-bene metadata from every cell in the source notebook.
+        // Strip all ipso metadata from every cell in the source notebook.
         for cell in &mut source_nb.cells {
-            cell.nota_bene_mut().clear();
+            cell.ipso_mut().clear();
         }
     } else {
         // Conflict detection: compare stored SHAs against current source state.
@@ -329,7 +329,7 @@ fn run_edit_continue(source_path: PathBuf, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// `nota-bene edit --clean <path>`: delete the editor notebook and recreate it fresh.
+/// `ipso edit --clean <path>`: delete the editor notebook and recreate it fresh.
 fn run_edit_clean(source_path: PathBuf) -> Result<()> {
     let editor_path = editor_path(&source_path)?;
 
@@ -354,7 +354,7 @@ fn run_edit_clean(source_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// `nota-bene view <path>`: print cell metadata as a JSON array.
+/// `ipso view <path>`: print cell metadata as a JSON array.
 fn run_view(
     path: PathBuf,
     stdin: bool,
@@ -408,7 +408,7 @@ fn run_view(
     Ok(())
 }
 
-/// `nota-bene update <path>`: apply JSON changes to cells.
+/// `ipso update <path>`: apply JSON changes to cells.
 fn run_update(
     path: PathBuf,
     stdin: bool,
@@ -470,7 +470,7 @@ fn run_update(
     Ok(())
 }
 
-/// `nota-bene status <path>`: show invalid cells and exit non-zero if any.
+/// `ipso status <path>`: show invalid cells and exit non-zero if any.
 fn run_status(path: PathBuf, stdin: bool, raw_filters: Vec<String>) -> Result<()> {
     let nb = if stdin {
         use std::io::Read;
@@ -521,7 +521,7 @@ fn run_status(path: PathBuf, stdin: bool, raw_filters: Vec<String>) -> Result<()
     Ok(())
 }
 
-/// `nota-bene accept <path>`: recompute SHAs for matching cells.
+/// `ipso accept <path>`: recompute SHAs for matching cells.
 fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -> Result<()> {
     if !all && raw_filters.is_empty() {
         bail!("one of --all or at least one --filter is required for `accept`");
@@ -615,10 +615,10 @@ Available help topics:
   filters    Filter syntax for --filter flags (view, status, accept, test)
 
 Usage:
-  nota-bene docs <topic>
+  ipso docs <topic>
 
 Example:
-  nota-bene docs filters";
+  ipso docs filters";
 
 const DOCS_FILTERS: &str = "\
 # Filter Syntax
@@ -685,12 +685,12 @@ Match cells by their overall validity (all diagnostics clear = valid).
 Match cells that have at least one diagnostic of the given type.
 
 Valid types:
-  missing             Code cell with no nota-bene metadata, or metadata present
+  missing             Code cell with no ipso metadata, or metadata present
                       but SHA snapshot never recorded (never accepted)
   needs_review        Cell source or metadata changed since last accept
   ancestor_modified   A preceding cell was modified, inserted, deleted, or reordered
   diff_conflict       Stored diff no longer applies cleanly to the current source
-  invalid_field       A nota-bene metadata field has a validation error
+  invalid_field       A ipso metadata field has a validation error
 
   --filter \"diagnostics.type:missing\"
   --filter \"diagnostics.type:needs_review,ancestor_modified\"   # either type
@@ -724,22 +724,22 @@ Multiple --filter flags are ANDed together — a cell must satisfy all of them.
 ## Examples
 
 View all invalid cells:
-  nota-bene view notebook.ipynb --filter \"status.valid:false\"
+  ipso view notebook.ipynb --filter \"status.valid:false\"
 
 Accept a single cell by ID:
-  nota-bene accept notebook.ipynb --filter \"cell:abc123\"
+  ipso accept notebook.ipynb --filter \"cell:abc123\"
 
 Run tests only for cells with a needs_review diagnostic:
-  nota-bene test notebook.ipynb --filter \"diagnostics.type:needs_review\"
+  ipso test notebook.ipynb --filter \"diagnostics.type:needs_review\"
 
 View cells that have fixtures but no test:
-  nota-bene view notebook.ipynb --filter \"fixtures:not_null\" --filter \"test:null\"
+  ipso view notebook.ipynb --filter \"fixtures:not_null\" --filter \"test:null\"
 
 View cells 2 through 5 that have any error-severity diagnostic:
-  nota-bene view notebook.ipynb --filter \"index:2..6\" --filter \"diagnostics.severity:error\"
+  ipso view notebook.ipynb --filter \"index:2..6\" --filter \"diagnostics.severity:error\"
 
 View the first three cells that have never been accepted:
-  nota-bene view notebook.ipynb --filter \"index:..3\" --filter \"diagnostics.type:missing\"
+  ipso view notebook.ipynb --filter \"index:..3\" --filter \"diagnostics.type:missing\"
 
 
 ## Notes
@@ -747,12 +747,12 @@ View the first three cells that have never been accepted:
 - Filters apply only to code cells. Markdown and raw cells are always excluded.
 - Cell IDs are stable UUIDs assigned by the notebook format; they do not change
   when cells are reordered.
-- The status.valid filter is implicit in `nota-bene status` (it always adds
+- The status.valid filter is implicit in `ipso status` (it always adds
   status.valid:false automatically).
 - For AI agents: use --filter \"cell:<id>\" to target a specific cell returned
-  by the `repair_nota_bene` MCP tool.";
+  by the `repair_ipso` MCP tool.";
 
-/// `nota-bene scaffold fixture|test`: generate JSON fragments.
+/// `ipso scaffold fixture|test`: generate JSON fragments.
 fn run_scaffold(cmd: ScaffoldCommand) -> Result<()> {
     let json = match cmd {
         ScaffoldCommand::Fixture {
@@ -787,7 +787,7 @@ fn run_scaffold(cmd: ScaffoldCommand) -> Result<()> {
     Ok(())
 }
 
-/// `nota-bene test <path>`: run notebook cell tests in parallel.
+/// `ipso test <path>`: run notebook cell tests in parallel.
 fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u64) -> Result<()> {
     let nb =
         load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?;
@@ -808,7 +808,7 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
             if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
                 return None;
             }
-            let data = cell.nota_bene()?;
+            let data = cell.ipso()?;
             let test = data.test.as_ref()?;
             if !use_filters || filter::cell_matches_all(&filters, &nb, cell, i) {
                 Some((i, cell.cell_id_str().to_string(), test.name.clone()))

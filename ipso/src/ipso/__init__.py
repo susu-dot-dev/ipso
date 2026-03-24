@@ -1,0 +1,131 @@
+"""ipso — in-kernel library for notebook cell testing.
+
+Public API for test authors and fixture source code:
+
+    ipso.execute_cell()            # run the loaded cell source
+    ipso.subtest(name)             # context manager for named subtests
+    ipso.register_teardown(fn)     # register a cleanup callback
+
+Runner-facing API (called by pytest-ipso, not test code):
+
+    ipso._runner.load_cell(source)         # inject patched source
+    ipso._runner.get_test_results()        # retrieve results as JSON
+    ipso._runner.run_teardowns()           # drain teardown stack
+"""
+
+from __future__ import annotations
+
+import traceback as _traceback
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+
+import ipso._state as _state
+from ipso import _runner
+from ipso.__about__ import __version__
+from ipso._state import SubtestResult
+
+__all__ = [
+    "__version__",
+    "_runner",
+    "SubtestResult",
+    "execute_cell",
+    "register_ipso_skip",
+    "register_teardown",
+    "subtest",
+]
+
+
+def execute_cell() -> None:
+    """Run the patched cell source in the kernel's global namespace.
+
+    The source must have been loaded by _runner.load_cell() before this is
+    called. Raises RuntimeError if no source has been loaded.
+
+    The source is executed via exec() in the caller's global namespace so
+    that any variables assigned by the cell (e.g. ``df``) are visible to
+    subsequent test code. If the cell raises an exception it propagates
+    to the caller — it is not swallowed.
+
+    Can be called multiple times within a single test; each call
+    re-executes the same source.
+    """
+    if _state.cell_source is None:
+        raise RuntimeError(
+            "ipso.execute_cell() called before ipso._runner.load_cell(). "
+            "The runner must inject the cell source before the test runs."
+        )
+    import inspect as _inspect
+
+    frame = _inspect.currentframe()
+    caller_globals = frame.f_back.f_globals if frame and frame.f_back else {}
+    exec(_state.cell_source, caller_globals)  # noqa: S102
+
+
+@contextmanager
+def subtest(name: str) -> Generator[None, None, None]:
+    """Context manager that records a named subtest result.
+
+    On exit without exception appends a passing result to _state.test_results.
+    On exit with exception appends a failing result (with error message and
+    traceback) and suppresses the exception so subsequent subtests can run.
+
+    Args:
+        name: Human-readable name for this subtest, used in pytest reporting.
+    """
+    try:
+        yield
+    except Exception as exc:
+        tb = _traceback.format_exc()
+        _state.test_results.append(
+            SubtestResult(
+                name=name,
+                passed=False,
+                error=str(exc),
+                traceback=tb,
+            )
+        )
+    else:
+        _state.test_results.append(
+            SubtestResult(
+                name=name,
+                passed=True,
+                error=None,
+                traceback=None,
+            )
+        )
+
+
+def register_ipso_skip() -> None:
+    """Register the %%ipso_skip IPython cell magic used by the test editor.
+
+    Call this once at the top of a ipso editor notebook. The magic
+    silently skips any cell it prefixes so that running all cells does not
+    accidentally execute test cells.
+    """
+    from IPython.core.magic import register_cell_magic
+
+    @register_cell_magic
+    def ipso_skip(line: str, cell: str) -> None:  # noqa: ARG001
+        """Skip this cell. Remove %%ipso_skip to run it."""
+        first_line = cell.splitlines()[0] if cell.strip() else "empty cell"
+        comment = (
+            f"The {first_line} cell is skipped"
+            + "All test cells are skipped by default in edit mode."
+            + "This is to ensure that running a notebook in edit mode mirrors the behavior of the actual test run"
+            + "where only a single test cell is executed per-kernel."
+            + "While in edit-mode, you can execute a cell by removing the %%ipso_skip line."
+            + "When you save the notebook, any remaining %%ipso_skip lines are removed."
+        )
+        print(comment)
+
+
+def register_teardown(callback: Callable[[], None]) -> None:
+    """Push a cleanup callback onto the teardown stack.
+
+    Callbacks are invoked by _runner.run_teardowns() in LIFO order after
+    the test completes. Typically called from fixture source, not test code.
+
+    Args:
+        callback: A callable that takes no arguments.
+    """
+    _state.teardown_stack.append(callback)

@@ -2,19 +2,19 @@
 
 ## Overview
 
-A single MCP tool, `repair_nota_bene`, that acts as a state-machine-driven
+A single MCP tool, `repair_ipso`, that acts as a state-machine-driven
 repair loop for notebook cell metadata. Each invocation identifies the next
 cell needing attention, runs its test if one exists, and returns a
 context-rich prompt that instructs the calling AI agent to fix the cell
-using the nota-bene CLI.
+using the ipso CLI.
 
 The tool never writes to the notebook. The AI agent performs all writes
-via `nota-bene update` and `nota-bene accept` CLI commands, then calls
-`repair_nota_bene` again to advance to the next cell.
+via `ipso update` and `ipso accept` CLI commands, then calls
+`repair_ipso` again to advance to the next cell.
 
 ## Motivation
 
-nota-bene attaches test infrastructure (fixtures, diffs, tests) to each
+ipso attaches test infrastructure (fixtures, diffs, tests) to each
 notebook cell so that hundreds of parallel kernels can quickly recreate
 notebook state and run tests. This requires:
 
@@ -29,7 +29,7 @@ notebook state and run tests. This requires:
   The goal is to test the user's actual code as much as possible —
   patching should be as small as possible.
 
-- **Tests**: Unit-test-style Python code using `nota_bene.subtest()` that
+- **Tests**: Unit-test-style Python code using `ipso.subtest()` that
   verifies the cell's behavior across multiple conditions and edge cases.
 
 The MCP tool automates the process of guiding an AI agent through creating
@@ -40,7 +40,7 @@ instructions tailored to each diagnostic state.
 
 ### Name
 
-`repair_nota_bene`
+`repair_ipso`
 
 ### Parameters
 
@@ -105,7 +105,7 @@ The tool is read-only — it never modifies the notebook.
    - Shell out to `<current_exe> test <notebook_path> --filter cell:<cell_id> --timeout 30`
    - Parse stdout as `Vec<CellTestResult>` JSON.
    - If the cell has no test, note "No test defined for this cell."
-7. Read the cell's source and existing nota-bene metadata (fixtures, diff, test).
+7. Read the cell's source and existing ipso metadata (fixtures, diff, test).
 8. Determine which diagnostic types apply to this cell.
 9. Build the response using the appropriate template for each diagnostic type,
    at the detail level specified (or defaulting to detailed).
@@ -134,10 +134,10 @@ Every response includes:
 2. **Cell source**: The full current source of the cell.
 3. **Existing metadata** (if any): Fixtures, diff, test.
 4. **Test result** (if a test exists): Pass/fail/error details.
-5. **CLI commands**: Exact `nota-bene update` and `nota-bene accept` commands
+5. **CLI commands**: Exact `ipso update` and `ipso accept` commands
    with all values populated. Present in BOTH detailed and brief modes.
 6. **Instructions** (detailed only): Full explanation of fixtures, diffs, tests.
-7. **Loop instruction**: "Then call `repair_nota_bene` again to continue
+7. **Loop instruction**: "Then call `repair_ipso` again to continue
    to the next cell."
 
 ### All cells valid
@@ -149,7 +149,7 @@ All cells in <notebook_path> are valid. Nothing to repair.
 ### Diagnostic: `missing` (detailed)
 
 ```
-Cell `<cell_id>` at index <N> in `<notebook_path>` has no nota-bene
+Cell `<cell_id>` at index <N> in `<notebook_path>` has no ipso
 metadata and needs fixtures, a diff, and tests.
 
 ## Cell source
@@ -160,7 +160,7 @@ metadata and needs fixtures, a diff, and tests.
 
 ## Instructions
 
-nota-bene attaches test infrastructure to each cell so that hundreds of
+ipso attaches test infrastructure to each cell so that hundreds of
 parallel kernels can quickly recreate the notebook state up to any cell
 and run isolated tests.
 
@@ -192,14 +192,14 @@ cell doesn't reference any external resources that fixtures replace.
 ### 3. Test
 
 Python code with subtests that verify the cell behaves correctly. Use
-`nota_bene.subtest("name")` as a context manager to define each subtest.
+`ipso.subtest("name")` as a context manager to define each subtest.
 Each subtest should cover a specific condition or edge case the cell
 handles.
 
 ### Commands
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   "fixtures": {
     "<fixture_name>": {
@@ -211,7 +211,7 @@ nota-bene update <notebook_path> --data '{
   "diff": "<unified diff string, or omit entirely if not needed>",
   "test": {
     "name": "<descriptive_test_name>",
-    "source": "<python test code using nota_bene.subtest()>"
+    "source": "<python test code using ipso.subtest()>"
   }
 }'
 \```
@@ -222,10 +222,10 @@ provide the test.
 After writing metadata:
 
 \```bash
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
-Then call `repair_nota_bene` again to continue to the next cell.
+Then call `repair_ipso` again to continue to the next cell.
 
 On subsequent calls, you may pass `detail_level` with `"brief"` for
 diagnostic types you've already seen, to reduce context. For example:
@@ -235,7 +235,7 @@ diagnostic types you've already seen, to reduce context. For example:
 ### Diagnostic: `missing` (brief)
 
 ```
-Cell `<cell_id>` at index <N> in `<notebook_path>` has no nota-bene metadata.
+Cell `<cell_id>` at index <N> in `<notebook_path>` has no ipso metadata.
 
 ## Cell source
 
@@ -246,26 +246,26 @@ Cell `<cell_id>` at index <N> in `<notebook_path>` has no nota-bene metadata.
 ## Commands
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   "fixtures": { ... },
   "diff": "...",
   "test": { "name": "...", "source": "..." }
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 Create fixtures (if external resources/side effects are involved), a
 minimal diff (if needed to reroute to fixtures), and tests for this cell.
 Call with `detail_level: {"missing": "detailed"}` for full instructions.
-Then call `repair_nota_bene` again.
+Then call `repair_ipso` again.
 ```
 
 ### Diagnostic: `needs_review` (detailed)
 
 ```
 Cell `<cell_id>` at index <N> in `<notebook_path>` has changed since its
-nota-bene metadata was last accepted.
+ipso metadata was last accepted.
 
 ## Cell source (current)
 
@@ -310,21 +310,21 @@ The test still passes. If the metadata looks correct for the current
 source, just accept:
 
 \```bash
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 <if test failed or errored>
 The test is failing. Examine what changed and update as needed:
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <only include fields that need changing>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
-Then call `repair_nota_bene` again to continue to the next cell.
+Then call `repair_ipso` again to continue to the next cell.
 
 On subsequent calls, you may pass `detail_level` with `"brief"` for
 diagnostic types you've already seen.
@@ -355,20 +355,20 @@ Test: <test source>
 
 <if test passed>
 \```bash
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 <if test failed>
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <fields to update>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 Review and update or accept. Call with `detail_level: {"needs_review": "detailed"}`
-for full instructions. Then call `repair_nota_bene` again.
+for full instructions. Then call `repair_ipso` again.
 ```
 
 ### Diagnostic: `ancestor_modified` (detailed)
@@ -417,7 +417,7 @@ The test still passes despite ancestor changes. If the upstream changes
 don't affect this cell's behavior, just accept:
 
 \```bash
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 <if test failed or errored>
@@ -425,14 +425,14 @@ The test is failing, likely due to changes in preceding cells. Update
 the fixtures or test to account for the new upstream state:
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <fields to update>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
-Then call `repair_nota_bene` again to continue to the next cell.
+Then call `repair_ipso` again to continue to the next cell.
 ```
 
 ### Diagnostic: `ancestor_modified` (brief)
@@ -461,20 +461,20 @@ Test: <test source>
 
 <if passed>
 \```bash
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 <if failed>
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <fields to update>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 Review and update or accept. Call with `detail_level: {"ancestor_modified": "detailed"}`
-for full instructions. Then call `repair_nota_bene` again.
+for full instructions. Then call `repair_ipso` again.
 ```
 
 ### Diagnostic: `diff_conflict` (detailed)
@@ -517,14 +517,14 @@ resources (e.g., swap a file path, redirect an API call to a mock).
 It should change as little as possible.
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   "diff": "<new unified diff, or null to remove>"
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
-Then call `repair_nota_bene` again to continue to the next cell.
+Then call `repair_ipso` again to continue to the next cell.
 ```
 
 ### Diagnostic: `diff_conflict` (brief)
@@ -547,22 +547,22 @@ Cell `<cell_id>` at index <N> in `<notebook_path>` has a broken diff.
 ## Commands
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   "diff": "<new unified diff, or null to remove>"
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 Rewrite the diff for the current source or remove it. Then accept.
 Call with `detail_level: {"diff_conflict": "detailed"}` for full instructions.
-Then call `repair_nota_bene` again.
+Then call `repair_ipso` again.
 ```
 
 ### Diagnostic: `invalid_field` (detailed)
 
 ```
-Cell `<cell_id>` at index <N> in `<notebook_path>` has invalid nota-bene
+Cell `<cell_id>` at index <N> in `<notebook_path>` has invalid ipso
 metadata.
 
 ## Cell source
@@ -573,11 +573,11 @@ metadata.
 
 ## Current metadata (raw)
 
-<raw JSON of the nota-bene metadata>
+<raw JSON of the ipso metadata>
 
 ## Instructions
 
-One or more nota-bene metadata fields have validation errors. Fix the
+One or more ipso metadata fields have validation errors. Fix the
 invalid fields using the update command.
 
 Valid field formats:
@@ -587,14 +587,14 @@ Valid field formats:
 - `test`: object with `name` (string) and `source` (string), or null
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <corrected fields>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
-Then call `repair_nota_bene` again to continue to the next cell.
+Then call `repair_ipso` again to continue to the next cell.
 ```
 
 ### Diagnostic: `invalid_field` (brief)
@@ -609,15 +609,15 @@ Cell `<cell_id>` at index <N> in `<notebook_path>` has invalid metadata.
 ## Commands
 
 \```bash
-nota-bene update <notebook_path> --data '{
+ipso update <notebook_path> --data '{
   "cell_id": "<cell_id>",
   <corrected fields>
 }'
-nota-bene accept <notebook_path> --filter cell:<cell_id>
+ipso accept <notebook_path> --filter cell:<cell_id>
 \```
 
 Fix the invalid fields. Call with `detail_level: {"invalid_field": "detailed"}`
-for format reference. Then call `repair_nota_bene` again.
+for format reference. Then call `repair_ipso` again.
 ```
 
 ### Combined diagnostics
@@ -631,9 +631,9 @@ issues before accepting.
 
 The calling AI is expected to:
 
-1. Call `repair_nota_bene(notebook_path)` — gets first broken cell
-2. Follow instructions: run `nota-bene update` and `nota-bene accept`
-3. Call `repair_nota_bene(notebook_path)` again — gets next broken cell
+1. Call `repair_ipso(notebook_path)` — gets first broken cell
+2. Follow instructions: run `ipso update` and `ipso accept`
+3. Call `repair_ipso(notebook_path)` again — gets next broken cell
 4. Repeat until response is "All cells are valid."
 
 On subsequent iterations, the AI may pass `detail_level` with `"brief"`
@@ -649,7 +649,7 @@ silently produce diffs that fail to apply. It is far easier for AI to
 produce the intended **patched cell source** (the full source after the
 desired changes) and have the tool compute the diff.
 
-`repair_nota_bene` instructions tell the AI: "produce the patched source,
+`repair_ipso` instructions tell the AI: "produce the patched source,
 then call `generate_diff` to get the unified diff string".
 
 ### Name
@@ -674,20 +674,20 @@ then call `generate_diff` to get the unified diff string".
    using `diff_utils::compute_diff`.
 4. If the sources are identical, return a message saying no diff is needed.
 5. Otherwise return the unified diff string, ready to pass directly to
-   `nota-bene update --data '{"cell_id": "...", "diff": "<returned string>"}'`.
+   `ipso update --data '{"cell_id": "...", "diff": "<returned string>"}'`.
 
 ### Usage in repair loop
 
-When `repair_nota_bene` indicates a diff is needed (Missing or DiffConflict
+When `repair_ipso` indicates a diff is needed (Missing or DiffConflict
 cases), the AI should:
 
 1. Decide what minimal changes are required to reroute the cell to use
    fixtures instead of real resources.
 2. Produce the full patched cell source with those changes applied.
 3. Call `generate_diff(notebook_path, cell_id, patched_source)`.
-4. Use the returned diff string in the `nota-bene update` command.
+4. Use the returned diff string in the `ipso update` command.
 
-## CLI: `nota-bene docs`
+## CLI: `ipso docs`
 
 A `help` subcommand provides detailed reference documentation for topics
 that are relevant to both humans and AI agents.
@@ -695,7 +695,7 @@ that are relevant to both humans and AI agents.
 ### Usage
 
 ```
-nota-bene docs [<topic>]
+ipso docs [<topic>]
 ```
 
 Running with no topic lists available topics. Running with a topic prints
@@ -707,7 +707,7 @@ comprehensive documentation including syntax, all options, and examples.
 |---|---|
 | `filters` | Full filter syntax for `--filter` flags used in `view`, `status`, `accept`, and `test` |
 
-### `nota-bene docs filters` content
+### `ipso docs filters` content
 
 Documents all filter keys:
 
@@ -725,8 +725,8 @@ and multiple worked examples.
 
 ### References to `help filters`
 
-All commands that accept `--filter` flags reference `nota-bene docs filters`
-in their `--help` output. The `repair_nota_bene` MCP tool includes the
+All commands that accept `--filter` flags reference `ipso docs filters`
+in their `--help` output. The `repair_ipso` MCP tool includes the
 reference at the bottom of every response. MCP tool descriptions also
 include the reference.
 
@@ -738,15 +738,15 @@ include the reference.
 - Add `run_help(topic)` function with `HELP_TOPICS` and `HELP_FILTERS`
   static string constants.
 - Update `--filter` doc strings on `view`, `status`, `accept`, and `test`
-  to reference `nota-bene docs filters`.
+  to reference `ipso docs filters`.
 
 ### `src/mcp.rs`
 
 Full rewrite. Remove existing `greet` and `ask_host` placeholder tools.
-Implement `repair_nota_bene` and `generate_diff` as described above.
+Implement `repair_ipso` and `generate_diff` as described above.
 Imports from existing modules: `notebook`, `metadata`, `diagnostics`,
 `diff_utils`. All tool descriptions and every response footer reference
-`nota-bene docs filters`.
+`ipso docs filters`.
 
 ### `Cargo.toml`
 
@@ -768,5 +768,5 @@ Add `"process"` feature to the `tokio` dependency for subprocess execution.
   once for parallel fixing.
 
 - **Additional help topics**: `fixtures`, `metadata`, `workflow` topics
-  could be added to `nota-bene docs` as the project matures.
+  could be added to `ipso docs` as the project matures.
 

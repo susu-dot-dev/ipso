@@ -103,7 +103,7 @@ flowchart LR
   end
   F -.->|secret| G
   G --> H[opencode.json with model]
-  G --> I[nota-bene MCP]
+  G --> I[ipso MCP]
   H --> I
 ```
 

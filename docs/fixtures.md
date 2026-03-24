@@ -28,13 +28,13 @@ Each cell's test is cheap and fast. No 3GB file is ever read.
 
 ## Metadata Schema
 
-Fixtures are stored in a cell's `nota-bene` metadata under the `fixtures` key: a dict keyed by fixture name. Each cell has its own `fixtures` dict — fixtures from different cells are separate entries in their respective cell's metadata.
+Fixtures are stored in a cell's `ipso` metadata under the `fixtures` key: a dict keyed by fixture name. Each cell has its own `fixtures` dict — fixtures from different cells are separate entries in their respective cell's metadata.
 
 Cell 1's metadata:
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "fixtures": {
       "load_small_csv": {
         "description": "Creates a 10-line temp CSV for testing the data loading cell",
@@ -49,7 +49,7 @@ Cell 2's metadata:
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "fixtures": {
       "mock_columns": {
         "description": "Overwrites price and quantity columns with known values",
@@ -105,7 +105,7 @@ with open("huge_file.csv") as f:
 tmp.flush()
 csv_name = tmp.name
 
-nota_bene.register_teardown(lambda: os.unlink(tmp.name))
+ipso.register_teardown(lambda: os.unlink(tmp.name))
 ```
 
 After the fixture runs, `csv_name` (and any other names you assign at the top level) remain in the kernel namespace for patched cell code and subsequent fixtures.
@@ -116,10 +116,10 @@ You can still use `global` when you need to assign into an outer scope from insi
 
 ## Teardown
 
-Fixtures register cleanup callbacks using `nota_bene.register_teardown(callback)`:
+Fixtures register cleanup callbacks using `ipso.register_teardown(callback)`:
 
 ```python
-nota_bene.register_teardown(lambda: os.unlink(tmp.name))
+ipso.register_teardown(lambda: os.unlink(tmp.name))
 ```
 
 Callbacks are stored in a LIFO stack. When the runner finishes a test, it triggers teardown — callbacks fire in reverse registration order, cleaning up in the opposite order from setup.
@@ -148,7 +148,7 @@ with open("sales.csv") as f:
 tmp.flush()
 csv_name = tmp.name
 
-nota_bene.register_teardown(lambda: os.unlink(tmp.name))
+ipso.register_teardown(lambda: os.unlink(tmp.name))
 ```
 
 ### Cell 2 fixture source (`mock_columns`)
@@ -178,11 +178,11 @@ Teardown fires in reverse order of registration. `load_small_csv` registered its
 
 ## Formal Specification
 
-### `nota-bene.fixtures` schema
+### `ipso.fixtures` schema
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "fixtures": {
       "<fixture_name>": {
         "description": "<string>",
@@ -226,7 +226,7 @@ Example:
 
 The runner joins the array with `""` before execution — no separator is needed since each line already includes its trailing `\n`.
 
-The source runs at the top level of the kernel user namespace. It may call `nota_bene.register_teardown(callback)` to register cleanup. It must not rely on any state other than what has already been established by prior fixtures or prior cells in the cumulative execution chain.
+The source runs at the top level of the kernel user namespace. It may call `ipso.register_teardown(callback)` to register cleanup. It must not rely on any state other than what has already been established by prior fixtures or prior cells in the cumulative execution chain.
 
 ### Fixture execution
 
@@ -242,5 +242,5 @@ For each cell in notebook order (1 through N):
 
 For cell N only:
 5. Execute assertions
-6. Trigger teardown by sending `nota_bene._runner.run_teardowns()` as an `execute_request`
+6. Trigger teardown by sending `ipso._runner.run_teardowns()` as an `execute_request`
 7. Shut down the kernel

@@ -29,11 +29,11 @@ pub struct TestMeta {
 }
 
 // ---------------------------------------------------------------------------
-// NotaBeneData  (owned snapshot, read-only)
+// IpsoData  (owned snapshot, read-only)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NotaBeneData {
+pub struct IpsoData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixtures: Option<IndexMap<String, Fixture>>,
 
@@ -52,25 +52,25 @@ pub struct NotaBeneData {
 }
 
 // ---------------------------------------------------------------------------
-// NotaBeneView  (mutable borrow for writing)
+// IpsoView  (mutable borrow for writing)
 // ---------------------------------------------------------------------------
 
-pub struct NotaBeneView<'a> {
+pub struct IpsoView<'a> {
     additional: &'a mut HashMap<String, Value>,
 }
 
-impl<'a> NotaBeneView<'a> {
+impl<'a> IpsoView<'a> {
     pub fn new(additional: &'a mut HashMap<String, Value>) -> Self {
         Self { additional }
     }
 
-    /// Ensure `"nota-bene": {}` exists; return &mut Map.
+    /// Ensure `"ipso": {}` exists; return &mut Map.
     pub fn ensure_nb_object(&mut self) -> &mut serde_json::Map<String, Value> {
         let entry = self
             .additional
-            .entry("nota-bene".to_string())
+            .entry("ipso".to_string())
             .or_insert_with(|| Value::Object(Default::default()));
-        entry.as_object_mut().expect("nota-bene must be an object")
+        entry.as_object_mut().expect("ipso must be an object")
     }
 
     fn set_field(&mut self, key: &str, value: Value) {
@@ -78,14 +78,14 @@ impl<'a> NotaBeneView<'a> {
     }
 
     pub fn remove_field(&mut self, key: &str) {
-        if let Some(nb) = self.additional.get_mut("nota-bene") {
+        if let Some(nb) = self.additional.get_mut("ipso") {
             if let Some(obj) = nb.as_object_mut() {
                 obj.remove(key);
             }
         }
     }
 
-    /// Ensure the "nota-bene" key exists (even if empty).
+    /// Ensure the "ipso" key exists (even if empty).
     pub fn mark_addressed(&mut self) {
         self.ensure_nb_object();
     }
@@ -134,21 +134,21 @@ impl<'a> NotaBeneView<'a> {
         self.set_field("shas", json);
     }
 
-    /// Remove the entire "nota-bene" key from the cell metadata.
+    /// Remove the entire "ipso" key from the cell metadata.
     pub fn clear(&mut self) {
-        self.additional.remove("nota-bene");
+        self.additional.remove("ipso");
     }
 }
 
 // ---------------------------------------------------------------------------
-// Read nota-bene meta from raw additional map
+// Read ipso meta from raw additional map
 // ---------------------------------------------------------------------------
 
-pub fn read_nota_bene(additional: &HashMap<String, Value>) -> Option<NotaBeneData> {
-    match additional.get("nota-bene") {
+pub fn read_ipso(additional: &HashMap<String, Value>) -> Option<IpsoData> {
+    match additional.get("ipso") {
         None => None,
         Some(v) => {
-            let data: NotaBeneData = serde_json::from_value(v.clone()).unwrap_or_default();
+            let data: IpsoData = serde_json::from_value(v.clone()).unwrap_or_default();
             Some(data)
         }
     }
@@ -207,28 +207,28 @@ mod tests {
 
     fn make_additional(nb_val: serde_json::Value) -> HashMap<String, serde_json::Value> {
         let mut m = HashMap::new();
-        m.insert("nota-bene".to_string(), nb_val);
+        m.insert("ipso".to_string(), nb_val);
         m
     }
 
-    // --- read_nota_bene ---
+    // --- read_ipso ---
 
     #[test]
     fn read_absent_key_returns_none() {
-        assert!(read_nota_bene(&HashMap::new()).is_none());
+        assert!(read_ipso(&HashMap::new()).is_none());
     }
 
     #[test]
     fn read_present_key_returns_some() {
         let add = make_additional(json!({"diff": "some diff"}));
-        assert!(read_nota_bene(&add).is_some());
+        assert!(read_ipso(&add).is_some());
     }
 
     #[test]
     fn read_malformed_value_returns_some_default() {
         // A non-object value silently falls back to Default.
         let add = make_additional(json!(42));
-        let data = read_nota_bene(&add).expect("expected Some");
+        let data = read_ipso(&add).expect("expected Some");
         assert!(data.diff.is_none());
         assert!(data.fixtures.is_none());
         assert!(data.test.is_none());
@@ -267,42 +267,42 @@ mod tests {
         assert_eq!(t.source, "assert True\nassert 1==1");
     }
 
-    // --- Option<T> on NotaBeneData ---
+    // --- Option<T> on IpsoData ---
 
     #[test]
-    fn nota_bene_data_diff_absent_is_none() {
-        let data: NotaBeneData = serde_json::from_str(r#"{}"#).unwrap();
+    fn ipso_data_diff_absent_is_none() {
+        let data: IpsoData = serde_json::from_str(r#"{}"#).unwrap();
         assert!(data.diff.is_none());
     }
 
     #[test]
-    fn nota_bene_data_diff_null_is_none() {
+    fn ipso_data_diff_null_is_none() {
         // null and absent both deserialize to None
-        let data: NotaBeneData = serde_json::from_str(r#"{"diff":null}"#).unwrap();
+        let data: IpsoData = serde_json::from_str(r#"{"diff":null}"#).unwrap();
         assert!(data.diff.is_none());
     }
 
     #[test]
-    fn nota_bene_data_diff_value_is_some() {
-        let data: NotaBeneData = serde_json::from_str(r#"{"diff":"some patch"}"#).unwrap();
+    fn ipso_data_diff_value_is_some() {
+        let data: IpsoData = serde_json::from_str(r#"{"diff":"some patch"}"#).unwrap();
         assert!(matches!(data.diff, Some(_)));
     }
 
     #[test]
-    fn nota_bene_data_fixtures_null_is_none() {
-        let data: NotaBeneData = serde_json::from_str(r#"{"fixtures":null}"#).unwrap();
+    fn ipso_data_fixtures_null_is_none() {
+        let data: IpsoData = serde_json::from_str(r#"{"fixtures":null}"#).unwrap();
         assert!(data.fixtures.is_none());
     }
 
     #[test]
-    fn nota_bene_data_extra_fields_preserved() {
+    fn ipso_data_extra_fields_preserved() {
         // Unknown keys land in `extra` and survive round-trips.
         let add = make_additional(json!({"editor": {"role": "test"}, "diff": null}));
-        let data = read_nota_bene(&add).expect("expected Some");
+        let data = read_ipso(&add).expect("expected Some");
         assert!(data.extra.contains_key("editor"));
     }
 
-    // --- NotaBeneView ---
+    // --- IpsoView ---
 
     fn fresh() -> HashMap<String, serde_json::Value> {
         HashMap::new()
@@ -311,42 +311,42 @@ mod tests {
     #[test]
     fn view_ensure_nb_object_creates_empty_object() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).ensure_nb_object();
-        assert!(add["nota-bene"].is_object());
+        IpsoView::new(&mut add).ensure_nb_object();
+        assert!(add["ipso"].is_object());
     }
 
     #[test]
     fn view_ensure_nb_object_is_idempotent() {
         let mut add = fresh();
         {
-            let mut v = NotaBeneView::new(&mut add);
+            let mut v = IpsoView::new(&mut add);
             v.ensure_nb_object().insert("x".to_string(), json!(1));
         }
         // Calling again should not overwrite existing content.
-        NotaBeneView::new(&mut add).ensure_nb_object();
-        assert_eq!(add["nota-bene"]["x"], json!(1));
+        IpsoView::new(&mut add).ensure_nb_object();
+        assert_eq!(add["ipso"]["x"], json!(1));
     }
 
     #[test]
     fn view_mark_addressed_creates_nb_key() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).mark_addressed();
-        assert!(add.contains_key("nota-bene"));
+        IpsoView::new(&mut add).mark_addressed();
+        assert!(add.contains_key("ipso"));
     }
 
     #[test]
     fn view_set_diff_stores_string() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).set_diff(Some("patch".to_string()));
-        assert_eq!(add["nota-bene"]["diff"], json!("patch"));
+        IpsoView::new(&mut add).set_diff(Some("patch".to_string()));
+        assert_eq!(add["ipso"]["diff"], json!("patch"));
     }
 
     #[test]
     fn view_set_diff_none_removes_key() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).set_diff(Some("x".to_string()));
-        NotaBeneView::new(&mut add).set_diff(None);
-        assert!(!add["nota-bene"].as_object().unwrap().contains_key("diff"));
+        IpsoView::new(&mut add).set_diff(Some("x".to_string()));
+        IpsoView::new(&mut add).set_diff(None);
+        assert!(!add["ipso"].as_object().unwrap().contains_key("diff"));
     }
 
     #[test]
@@ -361,9 +361,9 @@ mod tests {
                 source: "x = 1".to_string(),
             },
         );
-        NotaBeneView::new(&mut add).set_fixtures(Some(map));
-        assert!(add["nota-bene"]["fixtures"].is_object());
-        assert_eq!(add["nota-bene"]["fixtures"]["f1"]["priority"], json!(1));
+        IpsoView::new(&mut add).set_fixtures(Some(map));
+        assert!(add["ipso"]["fixtures"].is_object());
+        assert_eq!(add["ipso"]["fixtures"]["f1"]["priority"], json!(1));
     }
 
     #[test]
@@ -379,34 +379,31 @@ mod tests {
                 source: "x = 1".to_string(),
             },
         );
-        NotaBeneView::new(&mut add).set_fixtures(Some(map));
-        NotaBeneView::new(&mut add).set_fixtures(None);
-        assert!(!add["nota-bene"]
-            .as_object()
-            .unwrap()
-            .contains_key("fixtures"));
+        IpsoView::new(&mut add).set_fixtures(Some(map));
+        IpsoView::new(&mut add).set_fixtures(None);
+        assert!(!add["ipso"].as_object().unwrap().contains_key("fixtures"));
     }
 
     #[test]
     fn view_set_test_stores_name_and_source() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).set_test(Some(TestMeta {
+        IpsoView::new(&mut add).set_test(Some(TestMeta {
             name: "my_test".to_string(),
             source: "assert True".to_string(),
         }));
-        assert_eq!(add["nota-bene"]["test"]["name"], json!("my_test"));
-        assert_eq!(add["nota-bene"]["test"]["source"], json!("assert True"));
+        assert_eq!(add["ipso"]["test"]["name"], json!("my_test"));
+        assert_eq!(add["ipso"]["test"]["source"], json!("assert True"));
     }
 
     #[test]
     fn view_set_test_none_removes_key() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).set_test(Some(TestMeta {
+        IpsoView::new(&mut add).set_test(Some(TestMeta {
             name: "t".to_string(),
             source: "s".to_string(),
         }));
-        NotaBeneView::new(&mut add).set_test(None);
-        assert!(!add["nota-bene"].as_object().unwrap().contains_key("test"));
+        IpsoView::new(&mut add).set_test(None);
+        assert!(!add["ipso"].as_object().unwrap().contains_key("test"));
     }
 
     #[test]
@@ -416,31 +413,31 @@ mod tests {
             cell_id: "c1".to_string(),
             sha: "abc123".to_string(),
         }];
-        NotaBeneView::new(&mut add).set_shas(shas);
-        assert_eq!(add["nota-bene"]["shas"][0]["cell_id"], json!("c1"));
-        assert_eq!(add["nota-bene"]["shas"][0]["sha"], json!("abc123"));
+        IpsoView::new(&mut add).set_shas(shas);
+        assert_eq!(add["ipso"]["shas"][0]["cell_id"], json!("c1"));
+        assert_eq!(add["ipso"]["shas"][0]["sha"], json!("abc123"));
     }
 
     #[test]
     fn view_remove_field_removes_existing_key() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).set_diff(Some("d".to_string()));
-        NotaBeneView::new(&mut add).remove_field("diff");
-        assert!(!add["nota-bene"].as_object().unwrap().contains_key("diff"));
+        IpsoView::new(&mut add).set_diff(Some("d".to_string()));
+        IpsoView::new(&mut add).remove_field("diff");
+        assert!(!add["ipso"].as_object().unwrap().contains_key("diff"));
     }
 
     #[test]
     fn view_remove_field_is_no_op_when_key_absent() {
         let mut add = fresh();
-        NotaBeneView::new(&mut add).mark_addressed();
+        IpsoView::new(&mut add).mark_addressed();
         // Should not panic.
-        NotaBeneView::new(&mut add).remove_field("nonexistent");
+        IpsoView::new(&mut add).remove_field("nonexistent");
     }
 
     #[test]
     fn view_remove_field_is_no_op_when_nb_key_missing() {
         let mut add = fresh();
-        // nota-bene key doesn't exist; should not panic.
-        NotaBeneView::new(&mut add).remove_field("diff");
+        // ipso key doesn't exist; should not panic.
+        IpsoView::new(&mut add).remove_field("diff");
     }
 }

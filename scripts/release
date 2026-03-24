@@ -11,27 +11,27 @@
 #   scripts/release <package>
 #
 # Arguments:
-#   package   One of: nota-bene, pytest-nota-bene, all
+#   package   One of: ipso, pytest-ipso, all
 #
 # Examples:
-#   scripts/release nota-bene
-#   scripts/release pytest-nota-bene
+#   scripts/release ipso
+#   scripts/release pytest-ipso
 #   scripts/release all
 
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: scripts/release <package>"
-    echo "  package: nota-bene | pytest-nota-bene | all"
+    echo "  package: ipso | pytest-ipso | all"
     exit 1
 fi
 
 package="$1"
 
 case "$package" in
-    nota-bene|pytest-nota-bene|all) ;;
+    ipso|pytest-ipso|all) ;;
     *)
-        echo "Error: unknown package '$package'. Use: nota-bene | pytest-nota-bene | all"
+        echo "Error: unknown package '$package'. Use: ipso | pytest-ipso | all"
         exit 1
         ;;
 esac
@@ -65,7 +65,7 @@ get_nb_version() {
 }
 
 get_pnb_version() {
-    grep -m1 '^version' "$REPO_ROOT/pytest-nota-bene/pyproject.toml" | sed 's/version = "\(.*\)"/\1/'
+    grep -m1 '^version' "$REPO_ROOT/pytest-ipso/pyproject.toml" | sed 's/version = "\(.*\)"/\1/'
 }
 
 # --- Build tag list ---
@@ -73,23 +73,23 @@ get_pnb_version() {
 tags=()
 
 case "$package" in
-    nota-bene)
+    ipso)
         nb_version="$(get_nb_version)"
-        tags+=("nota-bene/v${nb_version}")
-        echo "nota-bene version: $nb_version"
+        tags+=("ipso/v${nb_version}")
+        echo "ipso version: $nb_version"
         ;;
-    pytest-nota-bene)
+    pytest-ipso)
         pnb_version="$(get_pnb_version)"
-        tags+=("pytest-nota-bene/v${pnb_version}")
-        echo "pytest-nota-bene version: $pnb_version"
+        tags+=("pytest-ipso/v${pnb_version}")
+        echo "pytest-ipso version: $pnb_version"
         ;;
     all)
         nb_version="$(get_nb_version)"
         pnb_version="$(get_pnb_version)"
-        tags+=("nota-bene/v${nb_version}")
-        tags+=("pytest-nota-bene/v${pnb_version}")
-        echo "nota-bene version: $nb_version"
-        echo "pytest-nota-bene version: $pnb_version"
+        tags+=("ipso/v${nb_version}")
+        tags+=("pytest-ipso/v${pnb_version}")
+        echo "ipso version: $nb_version"
+        echo "pytest-ipso version: $pnb_version"
         ;;
 esac
 

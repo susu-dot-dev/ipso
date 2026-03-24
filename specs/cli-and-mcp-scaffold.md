@@ -1,11 +1,11 @@
 ---
-name: Nota-bene CLI and MCP scaffold
+name: Ipso CLI and MCP scaffold
 overview: Scaffold a Rust binary with a clap-based CLI (--version + `mcp` subcommand) and an MCP server using the official rmcp crate, exposing a single "greet" tool over stdio.
 todos: []
 isProject: false
 ---
 
-# Nota-bene CLI and MCP server scaffold
+# Ipso CLI and MCP server scaffold
 
 ## Crate selection
 
@@ -39,7 +39,7 @@ isProject: false
 
 ## Layout
 
-- **Binary**: single crate `nota-bene` at workspace root (no workspace; one `Cargo.toml` and `src/`).
+- **Binary**: single crate `ipso` at workspace root (no workspace; one `Cargo.toml` and `src/`).
 - **Entry**: [src/main.rs](src/main.rs) — parse CLI, dispatch to `mcp` or exit after `--version`.
 - **MCP server**: [src/mcp.rs](src/mcp.rs) — server struct, greet tool, run over stdio.
 
@@ -58,14 +58,14 @@ isProject: false
 - **Subcommand**: `mcp` — no args; runs the MCP server (stdio). No `--help`-only behavior needed beyond clap default.
 
 ```text
-nota-bene --version    → print version
-nota-bene mcp          → run MCP server on stdio
+ipso --version    → print version
+ipso mcp          → run MCP server on stdio
 ```
 
 ## MCP server (rmcp)
 
 - **Transport**: stdio. Use rmcp's stdio transport (e.g. `rmcp::transport::stdio::stdio()` or the pattern from the README: `(stdin(), stdout())` and the type expected by `ServiceExt::serve`).
-- **Server struct**: e.g. `NotaBeneMcp` (or `McpServer`), holding a `ToolRouter<Self>`.
+- **Server struct**: e.g. `IpsoMcp` (or `McpServer`), holding a `ToolRouter<Self>`.
 - **Tool "greet"**:
   - One argument: string (e.g. `name: String`). Define a small struct `GreetParams { name: String }` with `Serialize`, `Deserialize`, `JsonSchema` and use `Parameters<GreetParams>` in the tool method.
   - Return: `"Hello, <name>"` (e.g. return type `String` if the macro supports it, or build `CallToolResult` with text content per rmcp API).

@@ -15,59 +15,59 @@ Fixtures, patches, and tests live in cell metadata — invisible in a normal not
 
 ## Commands
 
-### `nota-bene edit <path>`
+### `ipso edit <path>`
 
 Creates the editor notebook and exits. Non-blocking.
 
-1. Creates `<stem>.nota-bene.ipynb` in the same directory as the source (e.g. `analysis.ipynb` → `analysis.nota-bene.ipynb`). Exits with an error if the editor file already exists.
+1. Creates `<stem>.ipso.ipynb` in the same directory as the source (e.g. `analysis.ipynb` → `analysis.ipso.ipynb`). Exits with an error if the editor file already exists.
 2. Computes a SHA snapshot of every cell in the source notebook and stores it in the editor notebook's metadata (see [Notebook-level metadata](#notebook-level)).
 3. Prints the path to the editor notebook and exits.
 
 - **`<path>`**: Path to the source `.ipynb` file.
-- **Error if editor file exists**: If `<stem>.nota-bene.ipynb` already exists, exit non-zero with a message like:
+- **Error if editor file exists**: If `<stem>.ipso.ipynb` already exists, exit non-zero with a message like:
   ```
-  Editor notebook already exists: analysis.nota-bene.ipynb
-  Use `nota-bene edit --continue analysis.ipynb` to apply your changes, or
-      `nota-bene edit --clean analysis.ipynb` to discard it and start fresh.
+  Editor notebook already exists: analysis.ipso.ipynb
+  Use `ipso edit --continue analysis.ipynb` to apply your changes, or
+      `ipso edit --clean analysis.ipynb` to discard it and start fresh.
   ```
 
-### `nota-bene edit --continue <path>`
+### `ipso edit --continue <path>`
 
 Applies the editor notebook changes back to the source notebook.
 
-1. Reads the editor notebook from `<stem>.nota-bene.ipynb`. Exits with an error if it does not exist.
+1. Reads the editor notebook from `<stem>.ipso.ipynb`. Exits with an error if it does not exist.
 2. Performs conflict detection by comparing the stored `source_shas` against the current state of the source notebook (see [Conflict Detection](#step-2-conflict-detection)). If any cell has changed, aborts and reports which cells differ.
 3. Applies the changes back to the source notebook in place.
 4. Deletes the editor notebook.
 5. Prints a confirmation message.
 
 - **`<path>`**: Path to the source `.ipynb` file.
-- **`--force`**: Skip conflict detection. Before merging, strips all `nota-bene` metadata from every cell in the source notebook (i.e. removes the `nota-bene` key from `cell.metadata.additional` entirely for every cell), then applies the editor notebook's changes unconditionally. Use this to discard source-side changes and start fresh from the editor state.
+- **`--force`**: Skip conflict detection. Before merging, strips all `ipso` metadata from every cell in the source notebook (i.e. removes the `ipso` key from `cell.metadata.additional` entirely for every cell), then applies the editor notebook's changes unconditionally. Use this to discard source-side changes and start fresh from the editor state.
 
-### `nota-bene edit --clean <path>`
+### `ipso edit --clean <path>`
 
 Discards any in-progress editor notebook and creates a fresh one from the current source.
 
-1. If `<stem>.nota-bene.ipynb` exists, deletes it.
-2. Creates a new `<stem>.nota-bene.ipynb` from the current source notebook (same as `edit`).
+1. If `<stem>.ipso.ipynb` exists, deletes it.
+2. Creates a new `<stem>.ipso.ipynb` from the current source notebook (same as `edit`).
 3. Prints a confirmation message.
 
 - **`<path>`**: Path to the source `.ipynb` file.
 
 ---
 
-## Metadata Convention: `nota-bene.editor`
+## Metadata Convention: `ipso.editor`
 
-All editor-specific data — both notebook-level provenance and per-cell role information — lives under the `editor` subkey within the existing `nota-bene` object. This keeps the namespace unified and makes editor state easy to identify and strip: the apply step removes the `editor` subkey from every cell's metadata and from the notebook-level metadata before writing back to the source notebook. Nothing editor-specific leaks into normal notebook mode.
+All editor-specific data — both notebook-level provenance and per-cell role information — lives under the `editor` subkey within the existing `ipso` object. This keeps the namespace unified and makes editor state easy to identify and strip: the apply step removes the `editor` subkey from every cell's metadata and from the notebook-level metadata before writing back to the source notebook. Nothing editor-specific leaks into normal notebook mode.
 
 ### Notebook-level
 
-Stored in `nb.metadata.additional["nota-bene"]["editor"]`:
+Stored in `nb.metadata.additional["ipso"]["editor"]`:
 
 ```json
 {
   "metadata": {
-    "nota-bene": {
+    "ipso": {
       "editor": {
         "source_path": "analysis.ipynb",
         "source_shas": [
@@ -93,15 +93,15 @@ pub struct EditorNotebookMeta {
 }
 ```
 
-Read/write via `serde_json::from_value` / `serde_json::to_value` at `nb.metadata.additional["nota-bene"]["editor"]`.
+Read/write via `serde_json::from_value` / `serde_json::to_value` at `nb.metadata.additional["ipso"]["editor"]`.
 
 ### Cell-level
 
-Stored in `cell.metadata.additional["nota-bene"]["editor"]` on every cell the `edit` command creates. The shape varies by cell role; see each cell type below. The general form is:
+Stored in `cell.metadata.additional["ipso"]["editor"]` on every cell the `edit` command creates. The shape varies by cell role; see each cell type below. The general form is:
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "editor": {
       "role": "<role>",
       "cell_id": "<source_cell_id>"
@@ -122,19 +122,19 @@ On save, the `editor` subkey is stripped from all cells before writing to the so
 
 The `edit` command produces a notebook with this top-level structure:
 
-1. **Setup cell** — always first; registers the `%%nb_skip` IPython cell magic.
+1. **Setup cell** — always first; registers the `%%ipso_skip` IPython cell magic.
 2. **Sections** — one per **code** cell in the source notebook, in source order.
 
 Non-code cells (markdown, raw) from the source are **skipped** — they are not included in the editor notebook. The editor notebook only surfaces code cells, which are the ones that can carry test metadata.
 
 ### Setup Cell
 
-A code cell emitted as the first cell of every editor notebook. Its purpose is to register the `%%nb_skip` IPython cell magic so that test cells are skipped during run-all. The exact implementation is an internal detail of the `nota_bene` Python package (`nota_bene.register_nb_skip()`).
+A code cell emitted as the first cell of every editor notebook. Its purpose is to register the `%%ipso_skip` IPython cell magic so that test cells are skipped during run-all. The exact implementation is an internal detail of the `ipso` Python package (`ipso.register_ipso_skip()`).
 
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "setup"}}}
+{"ipso": {"editor": {"role": "setup"}}}
 ```
 
 See [Test Execution Guard](#test-execution-guard) for rationale.
@@ -145,7 +145,7 @@ See [Test Execution Guard](#test-execution-guard) for rationale.
 
 Each code cell in the source notebook becomes a **section** in the editor notebook.
 
-#### Cell with nota-bene metadata (`NotaBeneMeta::Present`)
+#### Cell with ipso metadata (`IpsoMeta::Present`)
 
 1. **Section header** (markdown cell)
 2. **Guide** (markdown cell, role `"guide"`) — explains fixture cells
@@ -153,9 +153,9 @@ Each code cell in the source notebook becomes a **section** in the editor notebo
 4. **Guide** (markdown cell, role `"guide"`) — explains the patched cell
 5. **Patched source cell** (code cell) — carries the original cell's Jupyter ID
 6. **Guide** (markdown cell, role `"guide"`) — explains the test cell
-7. **Test cell** (code cell) — guarded with `%%nb_skip`
+7. **Test cell** (code cell) — guarded with `%%ipso_skip`
 
-#### Cell without nota-bene metadata (`NotaBeneMeta::Absent`)
+#### Cell without ipso metadata (`IpsoMeta::Absent`)
 
 1. **Section header** (markdown cell)
 2. **Guide** (markdown cell, role `"guide"`) — explains the source cell
@@ -178,9 +178,9 @@ The exact markdown formatting is an implementation detail. The following informa
 
 | Status | Condition |
 |---|---|
-| **Has tests** | `NotaBeneMeta::Present` and `Staleness::Valid`. Also used when sub-keys are explicitly null — the cell has been reviewed and nothing is needed. |
-| **No tests** | `NotaBeneMeta::Absent` — never reviewed. |
-| **Needs review** | `NotaBeneMeta::Present` and `Staleness::OutOfDate` or `Staleness::NotImplemented` (shas missing). |
+| **Has tests** | `IpsoMeta::Present` and `Staleness::Valid`. Also used when sub-keys are explicitly null — the cell has been reviewed and nothing is needed. |
+| **No tests** | `IpsoMeta::Absent` — never reviewed. |
+| **Needs review** | `IpsoMeta::Present` and `Staleness::OutOfDate` or `Staleness::NotImplemented` (shas missing). |
 
 #### "Needs review" reasons
 
@@ -191,12 +191,12 @@ Computed by `shas::staleness()` — the stored `shas` snapshot is compared again
 - **"Preceding cell `<id>` was inserted (not present at last validation)"** — a cell ID exists in the current notebook but is absent from the stored snapshot.
 - **"Preceding cell `<id>` was deleted (present at last validation, now missing)"** — a cell ID is in the stored snapshot but no longer in the notebook.
 - **"Cell ordering changed since last validation"** — the sequence of cell IDs has changed.
-- **"No staleness data (shas missing)"** — the cell has a `nota-bene` key but no `shas` entry.
+- **"No staleness data (shas missing)"** — the cell has a `ipso` key but no `shas` entry.
 
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "section-header", "cell_id": "<cell_id>"}}}
+{"ipso": {"editor": {"role": "section-header", "cell_id": "<cell_id>"}}}
 ```
 
 ---
@@ -208,7 +208,7 @@ Short markdown cells with **no** reconstructable metadata beyond their role. The
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "guide"}}}
+{"ipso": {"editor": {"role": "guide"}}}
 ```
 
 On `--continue`, the parser **skips** guide cells (like the setup cell). They must not produce warnings.
@@ -238,7 +238,7 @@ The user can:
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "fixture", "cell_id": "<parent_cell_id>", "fixture_name": "<name>"}}}
+{"ipso": {"editor": {"role": "fixture", "cell_id": "<parent_cell_id>", "fixture_name": "<name>"}}}
 ```
 
 `cell_id` is the ID of the **parent source cell**, not the fixture cell's own Jupyter ID.
@@ -252,19 +252,19 @@ The cell source with the diff applied (or the original source if no diff exists)
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "patched-source", "cell_id": "<cell_id>"}}}
+{"ipso": {"editor": {"role": "patched-source", "cell_id": "<cell_id>"}}}
 ```
 
 ---
 
 ### Test Cell (code cell)
 
-The test source, prefixed with `%%nb_skip` to prevent accidental execution during run-all. If the cell has no test, an empty placeholder is emitted.
+The test source, prefixed with `%%ipso_skip` to prevent accidental execution during run-all. If the cell has no test, an empty placeholder is emitted.
 
 **With a test:**
 
 ```python
-%%nb_skip
+%%ipso_skip
 # test: <test_name>
 <test source>
 ```
@@ -272,16 +272,16 @@ The test source, prefixed with `%%nb_skip` to prevent accidental execution durin
 **Empty placeholder (no test yet):**
 
 ```python
-%%nb_skip
+%%ipso_skip
 # test: <unnamed>
 ```
 
-To run a test interactively, the user deletes the `%%nb_skip` line, runs the cell, then restores it when done (or leaves it off while iterating).
+To run a test interactively, the user deletes the `%%ipso_skip` line, runs the cell, then restores it when done (or leaves it off while iterating).
 
 Cell metadata:
 
 ```json
-{"nota-bene": {"editor": {"role": "test", "cell_id": "<cell_id>"}}}
+{"ipso": {"editor": {"role": "test", "cell_id": "<cell_id>"}}}
 ```
 
 ---
@@ -295,23 +295,23 @@ In the pytest runner, testing cell N runs only cell N's test — preceding cells
 - **State pollution** — a test that mutates kernel state (deletes a variable, alters a DataFrame) corrupts the environment for later sections.
 - **Behavioral mismatch** — code that passes in the editor may fail under pytest (or vice versa) because the preceding execution path differs.
 
-### The solution: `%%nb_skip` cell magic
+### The solution: `%%ipso_skip` cell magic
 
-Each test cell is prefixed with `%%nb_skip`. When IPython encounters a cell beginning with `%%magic_name`, it routes the **entire cell body** as a string to the registered magic function instead of executing it as Python. The `nb_skip` magic ignores the body and prints a skip notice to make skipped cells visible during a run-all.
+Each test cell is prefixed with `%%ipso_skip`. When IPython encounters a cell beginning with `%%magic_name`, it routes the **entire cell body** as a string to the registered magic function instead of executing it as Python. The `ipso_skip` magic ignores the body and prints a skip notice to make skipped cells visible during a run-all.
 
-The cell body remains valid, formattable Python — linters and formatters see real code below the magic line. Stripping the guard on save is trivial: remove the first line if it equals `%%nb_skip`.
+The cell body remains valid, formattable Python — linters and formatters see real code below the magic line. Stripping the guard on save is trivial: remove the first line if it equals `%%ipso_skip`.
 
 ---
 
 ## Apply: Reconstruction Algorithm (`--continue`)
 
-When `edit --continue` is invoked, it reads both notebooks from disk, performs conflict detection, parses the editor notebook's sections, and writes reconstructed `nota-bene` metadata back onto the source notebook before saving it.
+When `edit --continue` is invoked, it reads both notebooks from disk, performs conflict detection, parses the editor notebook's sections, and writes reconstructed `ipso` metadata back onto the source notebook before saving it.
 
 ### Step 1: Load notebooks
 
 1. Load the source notebook from `<path>` on disk.
-2. Load the editor notebook from `<stem>.nota-bene.ipynb` on disk.
-3. Extract `EditorNotebookMeta` from `nb.metadata.additional["nota-bene"]["editor"]` (for conflict detection).
+2. Load the editor notebook from `<stem>.ipso.ipynb` on disk.
+3. Extract `EditorNotebookMeta` from `nb.metadata.additional["ipso"]["editor"]` (for conflict detection).
 
 ### Step 2: Conflict detection
 
@@ -325,14 +325,14 @@ On any conflict, print a diagnostic to stderr and exit non-zero.
 
 ### Step 3: Parse sections
 
-Walk the editor notebook cells in order. Skip cells where `nota-bene.editor.role` is `"setup"` or `"guide"`. Build sections by scanning for `role == "section-header"` cells — each header starts a new section extending until the next header (or end of notebook).
+Walk the editor notebook cells in order. Skip cells where `ipso.editor.role` is `"setup"` or `"guide"`. Build sections by scanning for `role == "section-header"` cells — each header starts a new section extending until the next header (or end of notebook).
 
 For each section:
 
-- **`cell_id`**: from the section header's `nota-bene.editor.cell_id`.
-- **`fixtures`**: cells with `role == "fixture"` in `nota-bene.editor`, **plus** untagged code cells between the section header and the patched-source cell (new fixtures added by the user). Parse comment headers: `# fixture:` → name, `# description:` → description, `# priority:` → priority (default 0). Source is everything after the comment header lines. Fixtures without a `# fixture:` comment get an auto-generated name: `fixture_<cell_id>_<index>`.
-- **`patched_source`**: the cell with `role == "patched-source"`, identified by `nota-bene.editor` metadata or by matching Jupyter cell ID to the section's `cell_id`.
-- **`test`**: the cell with `role == "test"`, or the first untagged code cell after the patched-source cell and before the next section header. Strip `%%nb_skip` from the first line if present. Parse `# test:` for the name; source is everything after that line.
+- **`cell_id`**: from the section header's `ipso.editor.cell_id`.
+- **`fixtures`**: cells with `role == "fixture"` in `ipso.editor`, **plus** untagged code cells between the section header and the patched-source cell (new fixtures added by the user). Parse comment headers: `# fixture:` → name, `# description:` → description, `# priority:` → priority (default 0). Source is everything after the comment header lines. Fixtures without a `# fixture:` comment get an auto-generated name: `fixture_<cell_id>_<index>`.
+- **`patched_source`**: the cell with `role == "patched-source"`, identified by `ipso.editor` metadata or by matching Jupyter cell ID to the section's `cell_id`.
+- **`test`**: the cell with `role == "test"`, or the first untagged code cell after the patched-source cell and before the next section header. Strip `%%ipso_skip` from the first line if present. Parse `# test:` for the name; source is everything after that line.
 
 Untagged non-code cells (e.g. user-added markdown notes) within a section are ignored with a warning. Official guide cells use `role == "guide"` and are skipped without warning.
 
@@ -345,7 +345,7 @@ For each section, compare the patched source against the current original cell s
 
 ### Step 5: Write metadata
 
-For each section, determine the three-state values to write and apply via `cell.nota_bene_mut()`:
+For each section, determine the three-state values to write and apply via `cell.ipso_mut()`:
 
 **Fixtures:**
 - Section has fixture cells with content → `Some(Some(IndexMap))`.
@@ -366,7 +366,7 @@ For each section, determine the three-state values to write and apply via `cell.
 - Preserve the existing `shas` from the source notebook unchanged. The apply step does not recompute staleness — that is the AI's responsibility via `keep_updated`.
 
 **Editor subkey:**
-- Strip `nota-bene.editor` from every cell's metadata before writing. The source notebook must not contain editor-mode state.
+- Strip `ipso.editor` from every cell's metadata before writing. The source notebook must not contain editor-mode state.
 
 After computing all values, write the source notebook via `save_notebook()`.
 
@@ -388,7 +388,7 @@ Emitted as a section header + empty fixture zone + patched source + empty test p
 
 ### Cell with fixtures but no test
 
-Valid. Fixtures emitted normally. Test cell is an empty `%%nb_skip` placeholder. On save, `test` is written as `Some(None)` if the cell was previously addressed, or left absent if it was `Absent`.
+Valid. Fixtures emitted normally. Test cell is an empty `%%ipso_skip` placeholder. On save, `test` is written as `Some(None)` if the cell was previously addressed, or left absent if it was `Absent`.
 
 ### Cell with a test but no fixtures
 
@@ -400,15 +400,15 @@ On save, the fixture is absent from the parsed section and not written to the `f
 
 ### User adds a new fixture cell
 
-The new cell has no `nota-bene.editor` metadata. Identified by position (between section header and patched-source cell), treated as a new fixture. The `# fixture:` comment provides the name; auto-generated if absent.
+The new cell has no `ipso.editor` metadata. Identified by position (between section header and patched-source cell), treated as a new fixture. The `# fixture:` comment provides the name; auto-generated if absent.
 
 ### User reorders fixture cells
 
 On save, priorities are reassigned based on cell order: first → 0, second → 1, etc. If the user set explicit `# priority:` comment values, those are used as-is.
 
-### User removes `%%nb_skip` and saves
+### User removes `%%ipso_skip` and saves
 
-The `%%nb_skip` strip is conditional: only strip if the first line is exactly `%%nb_skip` (with or without trailing newline). If already removed, the source is taken as-is.
+The `%%ipso_skip` strip is conditional: only strip if the first line is exactly `%%ipso_skip` (with or without trailing newline). If already removed, the source is taken as-is.
 
 ### Non-code cells (markdown, raw) in the source
 
@@ -423,7 +423,7 @@ Passed through as-is in the editor notebook. On save, they are skipped — only 
 A previous attempt had a good approach to handling the cell metadata, that we should re-implement.
 | Module | Port from CLI branch |
 |---|---|
-| `metadata.rs` | `NotaBeneMeta`, `NotaBeneData`, `NotaBeneView`, `Fixture`, `TestMeta`, `ShaEntry`, serde helpers |
+| `metadata.rs` | `IpsoMeta`, `IpsoData`, `IpsoView`, `Fixture`, `TestMeta`, `ShaEntry`, serde helpers |
 | `notebook.rs` | `CellExt` trait, `load_notebook`, `save_notebook`, `resolve_cell`, `blank_cell_metadata` |
 | `shas.rs` | `compute_cell_sha`, `compute_snapshot`, `staleness`, `Staleness` |
 | `diff_utils.rs` | `compute_diff`, `apply_diff`, `check_diff_applies`, `reconstruct_original`, `has_conflict_markers` |
@@ -455,36 +455,36 @@ let json = nbformat::serialize_notebook(&nbformat::Notebook::V4(nb.clone()))?;
 
 - `nbformat::v4::Notebook` — top-level notebook with `cells: Vec<Cell>` and `metadata: Metadata`.
 - `nbformat::v4::Cell` — enum: `Cell::Code { id, source, metadata, outputs, execution_count }`, `Cell::Markdown { id, source, metadata }`, `Cell::Raw { id, source, metadata }`.
-- `nbformat::v4::CellMetadata` — strongly typed standard fields (`tags`, `collapsed`, `scrolled`, etc.) plus `additional: HashMap<String, Value>` for everything else, including `nota-bene`.
+- `nbformat::v4::CellMetadata` — strongly typed standard fields (`tags`, `collapsed`, `scrolled`, etc.) plus `additional: HashMap<String, Value>` for everything else, including `ipso`.
 - `nbformat::v4::CellId` — a validated newtype over `String`. Jupyter cell IDs must be 1–64 characters, alphanumeric plus hyphens/underscores. Use `CellId::try_from("some-id")` or generate random ones; do not construct bare strings and cast them.
-- `nbformat::v4::Metadata` — notebook-level metadata with `additional: HashMap<String, Value>` for the `nota-bene` key.
+- `nbformat::v4::Metadata` — notebook-level metadata with `additional: HashMap<String, Value>` for the `ipso` key.
 
 **Source format:** `source` on each cell variant is `Vec<String>` — an array of lines, each ending with `\n` except optionally the last. The `CellExt::source_str()` trait method joins them. When constructing new cells, split with `str::split_inclusive('\n')`.
 
 ---
 
-### `metadata.rs`: Typed Metadata with `NotaBeneView`
+### `metadata.rs`: Typed Metadata with `IpsoView`
 
-The `nota-bene` object sits inside `cell.metadata.additional["nota-bene"]` as a `serde_json::Value`. Naively cloning it in and out on every read/write would be expensive and error-prone. The CLI branch solved this with two complementary types:
+The `ipso` object sits inside `cell.metadata.additional["ipso"]` as a `serde_json::Value`. Naively cloning it in and out on every read/write would be expensive and error-prone. The CLI branch solved this with two complementary types:
 
-**`NotaBeneMeta`** — an owned snapshot for reading, obtained by calling `cell.nota_bene()`:
+**`IpsoMeta`** — an owned snapshot for reading, obtained by calling `cell.ipso()`:
 
 ```rust
-pub enum NotaBeneMeta {
-    Absent,                      // "nota-bene" key missing entirely
-    Present(Box<NotaBeneData>),  // key exists; fields inside may be absent/null/set
+pub enum IpsoMeta {
+    Absent,                      // "ipso" key missing entirely
+    Present(Box<IpsoData>),  // key exists; fields inside may be absent/null/set
 }
 ```
 
-**`NotaBeneView`** — a mutable borrow of `cell.metadata.additional` for writing, obtained by calling `cell.nota_bene_mut()`. It holds a `&mut HashMap<String, Value>` and operates directly on the map with no intermediate clone:
+**`IpsoView`** — a mutable borrow of `cell.metadata.additional` for writing, obtained by calling `cell.ipso_mut()`. It holds a `&mut HashMap<String, Value>` and operates directly on the map with no intermediate clone:
 
 ```rust
-pub struct NotaBeneView<'a> {
+pub struct IpsoView<'a> {
     additional: &'a mut HashMap<String, Value>,
 }
 ```
 
-All writes go through `NotaBeneView` methods:
+All writes go through `IpsoView` methods:
 
 ```rust
 view.set_fixtures(Some(map));   // writes Some(Some(map))
@@ -500,16 +500,16 @@ view.set_test(None);
 view.clear_test();              // not present in CLI branch — add alongside clear_diff
 
 view.set_shas(snapshot);
-view.mark_addressed();          // ensures "nota-bene" key exists without setting sub-keys
-view.clear();                   // removes "nota-bene" key entirely
+view.mark_addressed();          // ensures "ipso" key exists without setting sub-keys
+view.clear();                   // removes "ipso" key entirely
 ```
 
-The view exposes an internal `ensure_nb_object()` method that lazily creates the `"nota-bene"` JSON object if absent. `remove_field(key)` removes a sub-key. These are used to implement the `editor` subkey operations (see below).
+The view exposes an internal `ensure_nb_object()` method that lazily creates the `"ipso"` JSON object if absent. `remove_field(key)` removes a sub-key. These are used to implement the `editor` subkey operations (see below).
 
-**`NotaBeneData`** holds the typed sub-fields for reading:
+**`IpsoData`** holds the typed sub-fields for reading:
 
 ```rust
-pub struct NotaBeneData {
+pub struct IpsoData {
     pub fixtures: Option<Option<IndexMap<String, Fixture>>>,
     pub diff:     Option<Option<String>>,
     pub test:     Option<Option<TestMeta>>,
@@ -519,7 +519,7 @@ pub struct NotaBeneData {
 }
 ```
 
-The `extra` field with `#[serde(flatten)]` is important: it preserves unknown sub-keys (like `editor`) when round-tripping through serde, so adding the `editor` subkey requires no schema changes to `NotaBeneData`.
+The `extra` field with `#[serde(flatten)]` is important: it preserves unknown sub-keys (like `editor`) when round-tripping through serde, so adding the `editor` subkey requires no schema changes to `IpsoData`.
 
 ---
 
@@ -527,16 +527,16 @@ The `extra` field with `#[serde(flatten)]` is important: it preserves unknown su
 
 Each sub-key (`fixtures`, `diff`, `test`) has three distinct states that carry semantic meaning and must be preserved faithfully across edit/apply:
 
-| State | JSON in notebook | Rust in `NotaBeneData` | Meaning |
+| State | JSON in notebook | Rust in `IpsoData` | Meaning |
 |---|---|---|---|
-| **Absent** | key not present in `nota-bene` object | `None` | No decision made; field is unaddressed |
+| **Absent** | key not present in `ipso` object | `None` | No decision made; field is unaddressed |
 | **Null** | `"fixtures": null` | `Some(None)` | Explicitly reviewed; decided nothing is needed here |
 | **Value** | `"fixtures": { ... }` | `Some(Some(v))` | Has actual content |
 
-The top-level `nota-bene` key itself is also three-state via `NotaBeneMeta`:
+The top-level `ipso` key itself is also three-state via `IpsoMeta`:
 
-- `NotaBeneMeta::Absent` — key missing from `additional` entirely: cell has never been reviewed.
-- `NotaBeneMeta::Present(_)` — key exists: cell has been looked at, even if all sub-keys are null.
+- `IpsoMeta::Absent` — key missing from `additional` entirely: cell has never been reviewed.
+- `IpsoMeta::Present(_)` — key exists: cell has been looked at, even if all sub-keys are null.
 
 This distinction matters for `edit` status assignment:
 - `Absent` → **"No tests"** — the cell is completely unaddressed.
@@ -550,14 +550,14 @@ The three-state serde is handled by private modules in `metadata.rs` (`nullable_
 
 ---
 
-### `NotaBeneView` and the `editor` Subkey
+### `IpsoView` and the `editor` Subkey
 
-The `editor` subkey lives inside the `nota-bene` object alongside `fixtures`, `diff`, `test`, and `shas`. It is accessed via `NotaBeneView`'s low-level helpers (`ensure_nb_object`, `remove_field`) and through `NotaBeneData.extra` for reading:
+The `editor` subkey lives inside the `ipso` object alongside `fixtures`, `diff`, `test`, and `shas`. It is accessed via `IpsoView`'s low-level helpers (`ensure_nb_object`, `remove_field`) and through `IpsoData.extra` for reading:
 
 ```rust
 // Read: editor role from an owned snapshot
 fn editor_meta(cell: &Cell) -> Option<serde_json::Value> {
-    cell.nota_bene()
+    cell.ipso()
         .as_present()
         .and_then(|d| d.extra.get("editor"))
         .cloned()
@@ -565,14 +565,14 @@ fn editor_meta(cell: &Cell) -> Option<serde_json::Value> {
 
 // Write: set editor metadata on a cell
 fn set_editor_meta(cell: &mut Cell, meta: serde_json::Value) {
-    // ensure_nb_object() creates "nota-bene": {} if absent, then returns &mut Map
-    let obj = cell.nota_bene_mut().ensure_nb_object();
+    // ensure_nb_object() creates "ipso": {} if absent, then returns &mut Map
+    let obj = cell.ipso_mut().ensure_nb_object();
     obj.insert("editor".to_string(), meta);
 }
 
 // Strip: remove editor subkey before writing back to source notebook
 fn clear_editor_meta(cell: &mut Cell) {
-    cell.nota_bene_mut().remove_field("editor");
+    cell.ipso_mut().remove_field("editor");
 }
 ```
 
@@ -583,7 +583,7 @@ For the **notebook-level** `EditorNotebookMeta`, use `nb.metadata.additional` di
 ```rust
 // Write on edit
 nb.metadata.additional
-    .entry("nota-bene".to_string())
+    .entry("ipso".to_string())
     .or_insert_with(|| Value::Object(Default::default()))
     .as_object_mut()
     .unwrap()
@@ -591,13 +591,13 @@ nb.metadata.additional
 
 // Read on save
 let editor_meta: EditorNotebookMeta = nb.metadata.additional
-    .get("nota-bene")
+    .get("ipso")
     .and_then(|v| v.get("editor"))
-    .ok_or_else(|| anyhow!("not a nota-bene editor notebook (missing nota-bene.editor)"))?
+    .ok_or_else(|| anyhow!("not a ipso editor notebook (missing ipso.editor)"))?
     .clone()
     .try_into_deserialize()?;
 
-// Strip on save (source notebook must not gain a nota-bene key at notebook level
+// Strip on save (source notebook must not gain a ipso key at notebook level
 // if it didn't have one; the editor notebook's key is irrelevant to the source)
 // — no action needed; source notebook metadata is never touched by save.
 ```
@@ -640,7 +640,7 @@ enum Command {
         /// Delete the editor notebook, discarding in-progress edits.
         #[arg(long)]
         clean: bool,
-        /// Skip conflict detection; strip all nota-bene metadata from source before applying.
+        /// Skip conflict detection; strip all ipso metadata from source before applying.
         #[arg(long)]
         force: bool,
     },
@@ -657,7 +657,7 @@ enum Command {
 src/
   main.rs          # Add Edit to Command enum; dispatch to run_edit which handles the full lifecycle
   mcp.rs           # Unchanged
-  metadata.rs      # Port: NotaBeneMeta, NotaBeneData, NotaBeneView, Fixture, TestMeta, ShaEntry
+  metadata.rs      # Port: IpsoMeta, IpsoData, IpsoView, Fixture, TestMeta, ShaEntry
   notebook.rs      # Port: CellExt, load_notebook, save_notebook, resolve_cell
   shas.rs          # Port: compute_cell_sha, compute_snapshot, staleness, Staleness
   diff_utils.rs    # Port: compute_diff, apply_diff, reconstruct_original, has_conflict_markers
@@ -675,13 +675,13 @@ Integration tests use `.ipynb` fixture files in `tests/fixtures/`:
 2. **New fixture via position inference**: `edit` → inject a bare code cell between section header and patched source in the editor notebook → `edit --continue` → verify new fixture written to metadata.
 3. **Rename fixture via comment**: `edit` → change `# fixture: old_name` to `# fixture: new_name` → `edit --continue` → verify old key gone, new key present.
 4. **Conflict detection**: `edit` → modify source notebook cell → `edit --continue` → verify non-zero exit and diagnostic naming the changed cell.
-5. **`--force` flag**: `edit` → modify source notebook cell → `edit --continue --force` → verify all prior `nota-bene` metadata stripped from source, then editor changes applied successfully.
+5. **`--force` flag**: `edit` → modify source notebook cell → `edit --continue --force` → verify all prior `ipso` metadata stripped from source, then editor changes applied successfully.
 6. **Three-state round-trip**: notebook with `Absent`, `Some(None)`, and `Some(Some(v))` cells → `edit` → `edit --continue` unchanged → all three states preserved exactly.
 7. **Staleness reasons**: notebook with stale cells (`shas` out of date) → `edit` → parse section header markdown → "Needs review" and correct reasons present.
-8. **`%%nb_skip` strip**: `edit` → verify test cells have `%%nb_skip` first line → `edit --continue` → stripped source in metadata.
-9. **Editor subkey stripped**: after `edit --continue`, load source notebook; assert no cell has a `nota-bene.editor` subkey.
-10. **Editor file deleted**: after successful `edit --continue`, assert `<stem>.nota-bene.ipynb` no longer exists on disk.
-11. **Existing editor file error**: run `edit` when `<stem>.nota-bene.ipynb` already exists → non-zero exit with message suggesting `--continue` or `--clean`.
-12. **Missing editor file error**: run `edit --continue` when `<stem>.nota-bene.ipynb` does not exist → non-zero exit with clear error message.
-13. **`--clean` deletes editor file**: run `edit --clean` → `<stem>.nota-bene.ipynb` deleted, source notebook untouched.
+8. **`%%ipso_skip` strip**: `edit` → verify test cells have `%%ipso_skip` first line → `edit --continue` → stripped source in metadata.
+9. **Editor subkey stripped**: after `edit --continue`, load source notebook; assert no cell has a `ipso.editor` subkey.
+10. **Editor file deleted**: after successful `edit --continue`, assert `<stem>.ipso.ipynb` no longer exists on disk.
+11. **Existing editor file error**: run `edit` when `<stem>.ipso.ipynb` already exists → non-zero exit with message suggesting `--continue` or `--clean`.
+12. **Missing editor file error**: run `edit --continue` when `<stem>.ipso.ipynb` does not exist → non-zero exit with clear error message.
+13. **`--clean` deletes editor file**: run `edit --clean` → `<stem>.ipso.ipynb` deleted, source notebook untouched.
 14. **`--clean` missing file error**: run `edit --clean` when no editor file exists → non-zero exit with clear error message.

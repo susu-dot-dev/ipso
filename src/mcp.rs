@@ -21,7 +21,7 @@ use crate::notebook::{load_notebook, CellExt};
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RepairNotaBeneParams {
+pub struct RepairIpsoParams {
     /// Path to the .ipynb notebook file.
     pub notebook_path: String,
     /// Optional cell ID to target. If omitted, the first cell needing repair is used.
@@ -48,12 +48,12 @@ pub struct GenerateDiffParams {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct NotaBeneMcp {
+pub struct IpsoMcp {
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
-impl NotaBeneMcp {
+impl IpsoMcp {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -65,12 +65,12 @@ impl NotaBeneMcp {
         with full context and exact CLI commands to fix it. Call repeatedly in a loop until \
         all cells are valid. Use the optional cell_id to target a specific cell. \
         Use detail_level to pass {\"<diagnostic_type>\": \"brief\"} for types you have \
-        already seen to reduce context. Run `nota-bene docs filters` for filter syntax \
+        already seen to reduce context. Run `ipso docs filters` for filter syntax \
         used in the update/accept/test commands this tool emits."
     )]
-    async fn repair_nota_bene(
+    async fn repair_ipso(
         &self,
-        Parameters(params): Parameters<RepairNotaBeneParams>,
+        Parameters(params): Parameters<RepairIpsoParams>,
     ) -> Result<CallToolResult, McpError> {
         let result = do_repair(&params).await;
         match result {
@@ -83,7 +83,7 @@ impl NotaBeneMcp {
         description = "Compute a unified diff between a notebook cell's current source and a \
         patched version you provide. Use this instead of writing diffs by hand — produce the \
         intended patched source, call this tool, then pass the returned diff string to \
-        `nota-bene update`. Run `nota-bene docs filters` for filter syntax used in \
+        `ipso update`. Run `ipso docs filters` for filter syntax used in \
         update/accept/test commands."
     )]
     async fn generate_diff(
@@ -99,7 +99,7 @@ impl NotaBeneMcp {
 }
 
 #[tool_handler]
-impl ServerHandler for NotaBeneMcp {
+impl ServerHandler for IpsoMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_06_18)
@@ -107,7 +107,7 @@ impl ServerHandler for NotaBeneMcp {
 }
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let server = NotaBeneMcp::new();
+    let server = IpsoMcp::new();
     let transport = io::stdio();
     let running = server.serve(transport).await?;
     running.waiting().await?;
@@ -140,7 +140,7 @@ fn do_generate_diff(params: &GenerateDiffParams) -> anyhow::Result<String> {
     match diff_utils::compute_diff(&original, patched) {
         None => Ok(
             "The patched source is identical to the current cell source. No diff needed.\n\
-             You can omit the `diff` field in `nota-bene update`."
+             You can omit the `diff` field in `ipso update`."
                 .to_string(),
         ),
         Some(diff) => Ok(format!(
@@ -148,14 +148,14 @@ fn do_generate_diff(params: &GenerateDiffParams) -> anyhow::Result<String> {
              ```diff\n{}\n```\n\n\
              Pass this diff string as the `\"diff\"` value in:\n\
              ```bash\n\
-             nota-bene update {} --data '{{\"cell_id\": \"{}\", \"diff\": \"<diff above>\"}}'
+             ipso update {} --data '{{\"cell_id\": \"{}\", \"diff\": \"<diff above>\"}}'
              \n```",
             params.cell_id, params.notebook_path, diff, params.notebook_path, params.cell_id
         )),
     }
 }
 
-async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
+async fn do_repair(params: &RepairIpsoParams) -> anyhow::Result<String> {
     let path = Path::new(&params.notebook_path);
     let nb = load_notebook(path)?;
 
@@ -215,7 +215,7 @@ async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
     let (cell_index, cell, status) = target;
     let cell_id = cell.cell_id_str().to_string();
     let source = cell.source_str();
-    let nb_data = cell.nota_bene();
+    let nb_data = cell.ipso();
 
     // Determine which diagnostic types are present.
     let diag_types: Vec<DiagnosticType> = status
@@ -256,12 +256,12 @@ async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
 
     // Workflow rule — stated upfront.
     out.push_str(
-        "> **Workflow**: After making changes with `nota-bene update`, always run the \
+        "> **Workflow**: After making changes with `ipso update`, always run the \
          tests to verify the cell works correctly before accepting:\n\
          > ```bash\n",
     );
     out.push_str(&format!(
-        "> nota-bene test {} --filter cell:{}\n",
+        "> ipso test {} --filter cell:{}\n",
         params.notebook_path, cell_id
     ));
     out.push_str("> ```\n");
@@ -272,7 +272,7 @@ async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
          > ```bash\n",
     );
     out.push_str(&format!(
-        "> nota-bene accept {} --filter cell:{}\n",
+        "> ipso accept {} --filter cell:{}\n",
         params.notebook_path, cell_id
     ));
     out.push_str("> ```\n\n");
@@ -317,7 +317,7 @@ async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
     }
 
     // Loop instruction.
-    out.push_str("Then call `repair_nota_bene` again to continue to the next cell.\n");
+    out.push_str("Then call `repair_ipso` again to continue to the next cell.\n");
 
     // Brief mode hint (only if everything was detailed).
     if !detail_map.values().any(|v| v == "brief") {
@@ -331,7 +331,7 @@ async fn do_repair(params: &RepairNotaBeneParams) -> anyhow::Result<String> {
 
     out.push_str(
         "\nFor full filter syntax used in the commands above, run: \
-         `nota-bene docs filters`\n",
+         `ipso docs filters`\n",
     );
 
     Ok(out)
@@ -420,7 +420,7 @@ fn format_test_result(result: &crate::test_runner::CellTestResult) -> String {
 // Response building helpers
 // ---------------------------------------------------------------------------
 
-fn append_existing_metadata(out: &mut String, data: &crate::metadata::NotaBeneData) {
+fn append_existing_metadata(out: &mut String, data: &crate::metadata::IpsoData) {
     // Fixtures.
     out.push_str("## Existing fixtures\n\n");
     if let Some(ref fixtures) = data.fixtures {
@@ -461,7 +461,7 @@ fn append_diagnostic_section(
     is_brief: bool,
     notebook_path: &str,
     cell_id: &str,
-    nb_data: &Option<crate::metadata::NotaBeneData>,
+    nb_data: &Option<crate::metadata::IpsoData>,
     test_result: &str,
     status: &CellStatus,
 ) {
@@ -514,7 +514,7 @@ fn append_missing(
     is_brief: bool,
     notebook_path: &str,
     cell_id: &str,
-    nb_data: &Option<crate::metadata::NotaBeneData>,
+    nb_data: &Option<crate::metadata::IpsoData>,
     test_result: &str,
 ) {
     // Determine what's actually present vs missing.
@@ -533,7 +533,7 @@ fn append_missing(
         let test_passed = test_result.starts_with("All ") || test_result.contains("passed");
         out.push_str("## Not yet accepted\n\n");
         out.push_str(
-            "This cell has nota-bene metadata but has never been accepted. \
+            "This cell has ipso metadata but has never been accepted. \
              The `shas` field is empty, so it will always appear as `missing` \
              until accepted.\n\n",
         );
@@ -555,7 +555,7 @@ fn append_missing(
     // List exactly what's missing.
     if has_any_metadata {
         out.push_str("## Incomplete metadata\n\n");
-        out.push_str("This cell has some nota-bene metadata but is missing:\n");
+        out.push_str("This cell has some ipso metadata but is missing:\n");
         if !has_fixtures {
             out.push_str("- `fixtures` (if external resources or side effects are involved)\n");
         }
@@ -568,7 +568,7 @@ fn append_missing(
         out.push('\n');
     } else {
         out.push_str("## Missing metadata\n\n");
-        out.push_str("This cell has no nota-bene metadata at all.\n\n");
+        out.push_str("This cell has no ipso metadata at all.\n\n");
     }
 
     if is_brief {
@@ -587,7 +587,7 @@ fn append_missing(
         );
     } else {
         out.push_str(
-            "nota-bene attaches test infrastructure to each cell so that hundreds of \
+            "ipso attaches test infrastructure to each cell so that hundreds of \
              parallel kernels can quickly recreate the notebook state up to any cell \
              and run isolated tests.\n\n",
         );
@@ -617,14 +617,14 @@ fn append_missing(
                  Do NOT write a unified diff by hand. Instead:\n\
                  1. Produce the full patched cell source with your intended changes\n\
                  2. Call `generate_diff` with that patched source to get the correct diff\n\
-                 3. Use the returned diff string in `nota-bene update`\n\n",
+                 3. Use the returned diff string in `ipso update`\n\n",
             );
         }
         if !has_test {
             out.push_str("### Test\n\n");
             out.push_str(
                 "Python code with subtests that verify the cell behaves correctly. Use \
-                 `nota_bene.subtest(\"name\")` as a context manager to define each subtest. \
+                 `ipso.subtest(\"name\")` as a context manager to define each subtest. \
                  Each subtest should cover a specific condition or edge case the cell handles.\n\n",
             );
         }
@@ -803,13 +803,13 @@ fn append_diff_conflict(
              Do NOT write a unified diff by hand. Instead:\n\
              1. Produce the full patched cell source with your intended changes\n\
              2. Call `generate_diff` to compute the correct unified diff\n\
-             3. Pass the returned diff string to `nota-bene update`\n\n\
+             3. Pass the returned diff string to `ipso update`\n\n\
              Or set `diff` to null if a diff is no longer needed.\n\n",
         );
     }
 
     out.push_str(&format!(
-        "```bash\nnota-bene update {} --data '{{\n  \"cell_id\": \"{}\",\n  \"diff\": \"<output of generate_diff, or null to remove>\"\n}}'\n```\n\n",
+        "```bash\nipso update {} --data '{{\n  \"cell_id\": \"{}\",\n  \"diff\": \"<output of generate_diff, or null to remove>\"\n}}'\n```\n\n",
         notebook_path, cell_id
     ));
     out.push_str("Then run the test to confirm it passes:\n\n");
@@ -839,7 +839,7 @@ fn append_invalid_field(
         out.push_str("Fix the invalid fields.\n\n");
     } else {
         out.push_str(
-            "One or more nota-bene metadata fields have validation errors. Fix the \
+            "One or more ipso metadata fields have validation errors. Fix the \
              invalid fields using the update command.\n\n\
              Valid field formats:\n\
              - `fixtures`: object keyed by name, each with `description` (string), \
@@ -868,7 +868,7 @@ fn append_invalid_field(
 
 fn append_update_command_template(out: &mut String, notebook_path: &str, cell_id: &str) {
     out.push_str(&format!(
-        "```bash\nnota-bene update {} --data '{{\n\
+        "```bash\nipso update {} --data '{{\n\
          \x20 \"cell_id\": \"{}\",\n\
          \x20 \"fixtures\": {{\n\
          \x20   \"<fixture_name>\": {{\n\
@@ -880,7 +880,7 @@ fn append_update_command_template(out: &mut String, notebook_path: &str, cell_id
          \x20 \"diff\": \"<unified diff string, or omit entirely if not needed>\",\n\
          \x20 \"test\": {{\n\
          \x20   \"name\": \"<descriptive_test_name>\",\n\
-         \x20   \"source\": \"<python test code using nota_bene.subtest()>\"\n\
+         \x20   \"source\": \"<python test code using ipso.subtest()>\"\n\
          \x20 }}\n\
          }}'\n```\n",
         notebook_path, cell_id
@@ -889,7 +889,7 @@ fn append_update_command_template(out: &mut String, notebook_path: &str, cell_id
 
 fn append_update_command_existing(out: &mut String, notebook_path: &str, cell_id: &str) {
     out.push_str(&format!(
-        "```bash\nnota-bene update {} --data '{{\n\
+        "```bash\nipso update {} --data '{{\n\
          \x20 \"cell_id\": \"{}\",\n\
          \x20 <only include fields that need changing>\n\
          }}'\n```\n\n",
@@ -899,14 +899,14 @@ fn append_update_command_existing(out: &mut String, notebook_path: &str, cell_id
 
 fn append_test_command(out: &mut String, notebook_path: &str, cell_id: &str) {
     out.push_str(&format!(
-        "```bash\nnota-bene test {} --filter cell:{}\n```\n\n",
+        "```bash\nipso test {} --filter cell:{}\n```\n\n",
         notebook_path, cell_id
     ));
 }
 
 fn append_accept_command(out: &mut String, notebook_path: &str, cell_id: &str) {
     out.push_str(&format!(
-        "```bash\nnota-bene accept {} --filter cell:{}\n```\n\n",
+        "```bash\nipso accept {} --filter cell:{}\n```\n\n",
         notebook_path, cell_id
     ));
 }

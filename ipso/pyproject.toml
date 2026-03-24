@@ -1,0 +1,57 @@
+[project]
+name = "ipso"
+version = "0.1.0"
+description = "Notebook testing with fixtures, patches, and AI-generated tests"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = ["nbclient>=0.7", "ipykernel"]
+
+[project.urls]
+Homepage = "https://susu.dev/ipso"
+Repository = "https://github.com/susu-dot-dev/ipso"
+Issues = "https://github.com/susu-dot-dev/ipso/issues"
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "../Cargo.toml"
+bindings = "bin"
+python-source = "src"
+module-name = "ipso"
+python-packages = ["ipso"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-cov>=4.1.0"]
+lint = ["ruff>=0.12.9", "mypy>=1.0.0"]
+
+[tool.uv]
+default-groups = ["dev", "lint"]
+
+[tool.ruff]
+exclude = [".venv"]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["E741"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+addopts = "--cov --cov-report=xml --cov-report=html --cov-config=.coveragerc"
+
+[tool.coverage.run]
+source_pkgs = ["ipso", "tests"]
+branch = true
+parallel = true
+omit = ["ipso/__about__.py"]

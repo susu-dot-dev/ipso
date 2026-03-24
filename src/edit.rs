@@ -3,7 +3,7 @@ use nbformat::v4::{Cell, Notebook};
 use serde_json::json;
 
 use crate::diff_utils::{apply_diff, reconstruct_original};
-use crate::metadata::{Fixture, NotaBeneData};
+use crate::metadata::{Fixture, IpsoData};
 use crate::notebook::{blank_cell_metadata, new_cell_id, CellExt};
 use crate::shas::{cell_state, compute_snapshot, CellState};
 
@@ -29,8 +29,8 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
 
         match cell {
             Cell::Code { .. } => {
-                let nb_meta = cell.nota_bene();
-                match &nb_meta {
+                let ipso_meta = cell.ipso();
+                match &ipso_meta {
                     None => {
                         cells.push(make_section_header_no_tests(cell, cell_pos));
                         cells.push(make_guide_cell(GUIDE_SOURCE_ONLY));
@@ -87,12 +87,12 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
         cells,
     };
 
-    // Clear any nota-bene notebook-level metadata from the editor notebook,
+    // Clear any ipso notebook-level metadata from the editor notebook,
     // then store the source SHA snapshot for conflict detection in --continue.
-    nb.metadata.additional.remove("nota-bene");
+    nb.metadata.additional.remove("ipso");
     let source_shas = compute_snapshot(source);
     nb.metadata.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({
             "editor": {
                 "source_path": source_path_str,
@@ -112,18 +112,16 @@ const GUIDE_FIXTURES: &str = "### Fixture setup\n\nThe following **code** cells 
 
 const GUIDE_PATCHED: &str = "### Patched notebook cell\n\nThis is the source notebook cell **after** applying its unified diff (if any). It keeps the **same Jupyter cell ID** as in the original notebook.\n";
 
-const GUIDE_TEST: &str = "### Test\n\nAssertions and `nota_bene.subtest(...)`. The `%%nb_skip` line skips this cell when you **Run all** in the editor; remove it to run the test locally.\n";
+const GUIDE_TEST: &str = "### Test\n\nAssertions and `ipso.subtest(...)`. The `%%ipso_skip` line skips this cell when you **Run all** in the editor; remove it to run the test locally.\n";
 
-const GUIDE_SOURCE_ONLY: &str = "### Source cell\n\nPlain notebook code (no nota-bene metadata on this cell yet). To add fixtures or tests, use the nota-bene workflow and `nota-bene edit --continue`.\n";
+const GUIDE_SOURCE_ONLY: &str = "### Source cell\n\nPlain notebook code (no ipso metadata on this cell yet). To add fixtures or tests, use the ipso workflow and `ipso edit --continue`.\n";
 
-const SETUP_SOURCE: &str = "import nota_bene\nnota_bene.register_nb_skip()";
+const SETUP_SOURCE: &str = "import ipso\nipso.register_ipso_skip()";
 
 fn make_guide_cell(markdown: &str) -> Cell {
     let mut meta = blank_cell_metadata();
-    meta.additional.insert(
-        "nota-bene".to_string(),
-        json!({"editor": {"role": "guide"}}),
-    );
+    meta.additional
+        .insert("ipso".to_string(), json!({"editor": {"role": "guide"}}));
     Cell::Markdown {
         id: new_cell_id(),
         metadata: meta,
@@ -134,10 +132,8 @@ fn make_guide_cell(markdown: &str) -> Cell {
 
 fn make_setup_cell() -> Cell {
     let mut meta = blank_cell_metadata();
-    meta.additional.insert(
-        "nota-bene".to_string(),
-        json!({"editor": {"role": "setup"}}),
-    );
+    meta.additional
+        .insert("ipso".to_string(), json!({"editor": {"role": "setup"}}));
     Cell::Code {
         id: new_cell_id(),
         metadata: meta,
@@ -150,13 +146,13 @@ fn make_setup_cell() -> Cell {
 fn make_section_header_no_tests(cell: &Cell, pos: usize) -> Cell {
     let cell_id = cell.cell_id_str();
     let source = format!(
-        "---\n## `{cell_id}` · Cell {pos} · No tests\n\nNo tests yet. Edit the source cell below, write a test with `%%nb_skip` / `# test: <name>`, then run `nota-bene edit --continue <notebook>`.",
+        "---\n## `{cell_id}` · Cell {pos} · No tests\n\nNo tests yet. Edit the source cell below, write a test with `%%ipso_skip` / `# test: <name>`, then run `ipso edit --continue <notebook>`.",
         pos = pos,
         cell_id = cell_id
     );
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "section-header", "cell_id": cell_id}}),
     );
     Cell::Markdown {
@@ -170,7 +166,7 @@ fn make_section_header_no_tests(cell: &Cell, pos: usize) -> Cell {
 fn make_section_header_with_meta(
     cell: &Cell,
     pos: usize,
-    data: &NotaBeneData,
+    data: &IpsoData,
     state: &CellState,
 ) -> Result<Cell> {
     let cell_id = cell.cell_id_str();
@@ -179,7 +175,7 @@ fn make_section_header_with_meta(
         CellState::Valid => ("Has tests", vec![]),
         CellState::Missing => (
             "Needs review",
-            vec!["This cell has no tests or fixtures yet. Add them in the cells below, then run `nota-bene edit --continue` to save.".to_string()],
+            vec!["This cell has no tests or fixtures yet. Add them in the cells below, then run `ipso edit --continue` to save.".to_string()],
         ),
         CellState::Changed(result) => {
             let mut all_reasons = result.needs_review.clone();
@@ -189,9 +185,9 @@ fn make_section_header_with_meta(
     };
 
     let action_hint = match state {
-        CellState::Valid => "Tests are up to date. Edit the source or test cells below, then run `nota-bene edit --continue <notebook>`.",
-        CellState::Missing => "Tests exist but have never been validated against the current source (no SHA recorded yet). Review the test cell below, then run `nota-bene edit --continue <notebook>` to lock in the current state.",
-        CellState::Changed(_) => "The source has changed since these tests were saved. Review and update the test cell below, then run `nota-bene edit --continue <notebook>`.",
+        CellState::Valid => "Tests are up to date. Edit the source or test cells below, then run `ipso edit --continue <notebook>`.",
+        CellState::Missing => "Tests exist but have never been validated against the current source (no SHA recorded yet). Review the test cell below, then run `ipso edit --continue <notebook>` to lock in the current state.",
+        CellState::Changed(_) => "The source has changed since these tests were saved. Review and update the test cell below, then run `ipso edit --continue <notebook>`.",
     };
 
     let mut parts = vec![format!(
@@ -218,7 +214,7 @@ fn make_section_header_with_meta(
     let source = parts.join("\n\n");
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "section-header", "cell_id": cell_id}}),
     );
     Ok(Cell::Markdown {
@@ -230,7 +226,7 @@ fn make_section_header_with_meta(
 }
 
 fn make_source_cell_passthrough(cell: &Cell) -> Cell {
-    // For cells without nota-bene metadata, emit the original source, carrying
+    // For cells without ipso metadata, emit the original source, carrying
     // the original Jupyter cell ID.
     if let Cell::Code {
         id,
@@ -242,7 +238,7 @@ fn make_source_cell_passthrough(cell: &Cell) -> Cell {
     {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"editor": {"role": "source", "cell_id": id.as_str()}}),
         );
         Cell::Code {
@@ -264,7 +260,7 @@ fn make_stub_fixture_cell(parent_cell_id: &str) -> Cell {
     let source = "# fixture: \n# description: \n# priority: 0";
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "fixture", "cell_id": parent_cell_id, "fixture_name": ""}}),
     );
     Cell::Code {
@@ -288,7 +284,7 @@ fn make_fixture_cell(parent_cell_id: &str, name: &str, fixture: &Fixture) -> Cel
     };
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "fixture", "cell_id": parent_cell_id, "fixture_name": name}}),
     );
     Cell::Code {
@@ -303,7 +299,7 @@ fn make_fixture_cell(parent_cell_id: &str, name: &str, fixture: &Fixture) -> Cel
 fn make_patched_source_cell(cell_id: &str, source: &str) -> Cell {
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "patched-source", "cell_id": cell_id}}),
     );
     Cell::Code {
@@ -317,13 +313,13 @@ fn make_patched_source_cell(cell_id: &str, source: &str) -> Cell {
 
 fn make_test_cell(cell_id: &str, test_name: &str, test_source: &str) -> Cell {
     let source = if test_source.is_empty() {
-        format!("%%nb_skip\n# test: {}", test_name)
+        format!("%%ipso_skip\n# test: {}", test_name)
     } else {
-        format!("%%nb_skip\n# test: {}\n{}", test_name, test_source)
+        format!("%%ipso_skip\n# test: {}\n{}", test_name, test_source)
     };
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({"editor": {"role": "test", "cell_id": cell_id}}),
     );
     Cell::Code {
@@ -427,7 +423,7 @@ mod tests {
         let editor = build_editor_notebook(&nb, "test.ipynb").unwrap();
         assert!(editor.cells[0]
             .source_str()
-            .contains("nota_bene.register_nb_skip"));
+            .contains("ipso.register_ipso_skip"));
     }
 
     #[test]
@@ -464,7 +460,7 @@ mod tests {
     #[test]
     fn code_cell_with_meta_produces_header_source_and_test_cells() {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -484,7 +480,7 @@ mod tests {
     fn fixture_cells_emitted_sorted_by_priority() {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({
                 "fixtures": {
                     "z_fix": {"description": "d", "priority": 10, "source": "z = 10"},
@@ -515,19 +511,19 @@ mod tests {
     }
 
     #[test]
-    fn editor_notebook_has_nota_bene_editor_with_source_shas() {
+    fn editor_notebook_has_ipso_editor_with_source_shas() {
         let mut nb = notebook(vec![]);
         nb.metadata
             .additional
-            .insert("nota-bene".to_string(), json!({"key": "val"}));
+            .insert("ipso".to_string(), json!({"key": "val"}));
         let editor = build_editor_notebook(&nb, "test.ipynb").unwrap();
-        // The editor notebook should have nota-bene.editor with source_shas.
-        let nb_meta = editor.metadata.additional.get("nota-bene").unwrap();
-        assert!(nb_meta.get("editor").is_some());
-        assert!(nb_meta["editor"].get("source_shas").is_some());
-        assert!(nb_meta["editor"].get("source_path").is_some());
+        // The editor notebook should have ipso.editor with source_shas.
+        let ipso_meta = editor.metadata.additional.get("ipso").unwrap();
+        assert!(ipso_meta.get("editor").is_some());
+        assert!(ipso_meta["editor"].get("source_shas").is_some());
+        assert!(ipso_meta["editor"].get("source_path").is_some());
         // Original keys from source notebook-level metadata should be cleared.
-        assert!(nb_meta.get("key").is_none());
+        assert!(ipso_meta.get("key").is_none());
     }
 
     #[test]
@@ -537,7 +533,7 @@ mod tests {
         let diff = crate::diff_utils::compute_diff(original, patched).unwrap();
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "diff": diff }));
+            .insert("ipso".to_string(), json!({ "diff": diff }));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -557,10 +553,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cell_source_includes_nb_skip_and_name() {
+    fn test_cell_source_includes_ipso_skip_and_name() {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "test": { "name": "check_x", "source": "assert x == 1" } }),
         );
         let cell = Cell::Code {
@@ -579,7 +575,7 @@ mod tests {
             .find(|c| c.editor_role().as_deref() == Some("test"))
             .unwrap();
         let src = test_cell.source_str();
-        assert!(src.starts_with("%%nb_skip\n"));
+        assert!(src.starts_with("%%ipso_skip\n"));
         assert!(src.contains("# test: check_x"));
         assert!(src.contains("assert x == 1"));
     }
@@ -592,7 +588,7 @@ mod tests {
     #[test]
     fn present_cell_with_no_fixtures_emits_stub_fixture() {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -632,7 +628,7 @@ mod tests {
     fn present_cell_with_real_fixtures_emits_no_stub() {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({
                 "fixtures": {
                     "my_fix": {"description": "d", "priority": 0, "source": "x = 1"}
@@ -668,7 +664,7 @@ mod tests {
     fn present_cell_with_explicit_null_fixtures_emits_stub() {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({"fixtures": null}));
+            .insert("ipso".to_string(), json!({"fixtures": null}));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -698,7 +694,7 @@ mod tests {
         // shas must be present so cell_state() returns Valid, not Missing.
         // Use an empty shas list for simplicity (no preceding cells to check).
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             serde_json::json!({ "diff": null, "shas": [] }),
         );
         let cell = Cell::Code {
@@ -732,7 +728,7 @@ mod tests {
         let diff = crate::diff_utils::compute_diff(original, patched).unwrap();
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             serde_json::json!({ "diff": diff, "shas": [] }),
         );
         let cell = Cell::Code {
@@ -761,7 +757,7 @@ mod tests {
     /// A changed cell with no diff should NOT include the original source section.
     #[test]
     fn section_header_out_of_date_without_diff_omits_original_source() {
-        // Cell has nota-bene metadata with shas (triggering cell_state check),
+        // Cell has ipso metadata with shas (triggering cell_state check),
         // but no diff. The section header should not contain "Original source".
         let c1_old = plain_cell_for_staleness("c1", "x = 1");
         let c2_meta = {
@@ -771,7 +767,7 @@ mod tests {
                 {"cell_id": "c1", "sha": crate::shas::compute_cell_sha(&c1_old)},
             ]);
             meta.additional
-                .insert("nota-bene".to_string(), serde_json::json!({ "shas": shas }));
+                .insert("ipso".to_string(), serde_json::json!({ "shas": shas }));
             meta
         };
         // Now c1 is different to trigger Changed
@@ -819,7 +815,7 @@ mod tests {
     #[test]
     fn present_cell_with_no_test_emits_stub_test() {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -837,8 +833,8 @@ mod tests {
             .collect();
         assert_eq!(test_cells.len(), 1, "expected exactly one test cell");
         assert!(
-            test_cells[0].source_str().starts_with("%%nb_skip\n"),
-            "test stub must start with %%nb_skip"
+            test_cells[0].source_str().starts_with("%%ipso_skip\n"),
+            "test stub must start with %%ipso_skip"
         );
     }
 }

@@ -1,6 +1,6 @@
 ---
 name: Diagnostic renames and bug fix
-overview: Rename diagnostic types and staleness enum, fix code cells with no nota-bene metadata being silently ignored.
+overview: Rename diagnostic types and staleness enum, fix code cells with no ipso metadata being silently ignored.
 todos: []
 isProject: false
 ---
@@ -9,7 +9,7 @@ isProject: false
 
 ## Purpose
 
-The current diagnostic type names (`Stale`, `MissingSha`) and the `Staleness` enum are implementation-centric and unclear to users and AI agents. This spec renames them to convey intent, splits the overly-broad `Stale` into two distinct cases, and fixes a bug where code cells with no `nota-bene` metadata are silently treated as valid.
+The current diagnostic type names (`Stale`, `MissingSha`) and the `Staleness` enum are implementation-centric and unclear to users and AI agents. This spec renames them to convey intent, splits the overly-broad `Stale` into two distinct cases, and fixes a bug where code cells with no `ipso` metadata are silently treated as valid.
 
 ---
 
@@ -21,7 +21,7 @@ The current diagnostic type names (`Stale`, `MissingSha`) and the `Staleness` en
 |---|---|---|
 | `Staleness` | `CellState` | The enum itself |
 | `Staleness::Valid` | `CellState::Valid` | SHAs match, everything checks out |
-| `Staleness::NotImplemented` | `CellState::Missing` | Code cell has no nota-bene setup at all, or has nota-bene but no shas |
+| `Staleness::NotImplemented` | `CellState::Missing` | Code cell has no ipso setup at all, or has ipso but no shas |
 | `Staleness::OutOfDate(Vec<String>)` | Split — see below | |
 
 `OutOfDate` currently lumps all reasons into one variant. Split it into two variants:
@@ -87,7 +87,7 @@ pub enum DiagnosticType {
 
 ---
 
-## Bug Fix: Code cells with no `nota-bene` metadata
+## Bug Fix: Code cells with no `ipso` metadata
 
 ### Current behavior (buggy)
 
@@ -97,14 +97,14 @@ In `staleness()` (line 70-72 of `shas.rs`):
 None => return Staleness::Valid,
 ```
 
-Code cells with no `nota-bene` key are treated as valid. This means the AI is never told "hey, this code cell has no tests or fixtures — you should set it up."
+Code cells with no `ipso` key are treated as valid. This means the AI is never told "hey, this code cell has no tests or fixtures — you should set it up."
 
 ### Fixed behavior
 
 In the renamed `cell_state()`:
 
 ```rust
-let data: NotaBeneData = match cell.nota_bene() {
+let data: IpsoData = match cell.ipso() {
     None => {
         if matches!(cell, Cell::Code { .. }) {
             return CellState::Missing;
@@ -115,7 +115,7 @@ let data: NotaBeneData = match cell.nota_bene() {
 };
 ```
 
-Markdown and raw cells remain `Valid` (they are not under nota-bene management). Code cells with no metadata produce `Missing`.
+Markdown and raw cells remain `Valid` (they are not under ipso management). Code cells with no metadata produce `Missing`.
 
 ---
 
@@ -126,7 +126,7 @@ Markdown and raw cells remain `Valid` (they are not under nota-bene management).
 - Rename `Staleness` → `CellState` with new variants `Valid`, `Missing`, `Changed(CellStateResult)`.
 - Add `CellStateResult` struct with `needs_review` and `ancestor_modified` fields.
 - Rename `staleness()` → `cell_state()`.
-- Apply the bug fix: code cells with no nota-bene metadata return `CellState::Missing`.
+- Apply the bug fix: code cells with no ipso metadata return `CellState::Missing`.
 - Split the existing reason-collection logic: line 129-133 (target cell SHA changed) feeds `needs_review`; lines 92-149 (deleted, inserted, reordered, preceding modified) feed `ancestor_modified`.
 - Update all tests: rename assertions from `Staleness::*` to `CellState::*`, update variant names, add new tests for the `Missing` bug fix on plain code cells.
 
@@ -176,9 +176,9 @@ Markdown and raw cells remain `Valid` (they are not under nota-bene management).
 
 | Test | What it checks |
 |---|---|
-| `plain_code_cell_returns_missing` | A code cell with no `nota-bene` metadata returns `CellState::Missing` |
+| `plain_code_cell_returns_missing` | A code cell with no `ipso` metadata returns `CellState::Missing` |
 | `markdown_cell_returns_valid` | A markdown cell with no metadata returns `CellState::Valid` |
-| `code_cell_with_nb_no_shas_returns_missing` | Code cell with `nota-bene: {}` but no `shas` returns `Missing` |
+| `code_cell_with_nb_no_shas_returns_missing` | Code cell with `ipso: {}` but no `shas` returns `Missing` |
 | `changed_returns_both_buckets` | A cell where both its own SHA and a predecessor SHA differ returns `Changed` with both `needs_review` and `ancestor_modified` non-empty |
 | `changed_only_ancestor` | Only predecessor changed → `Changed` with empty `needs_review`, non-empty `ancestor_modified` |
 | `changed_only_self` | Only target cell changed → `Changed` with non-empty `needs_review`, empty `ancestor_modified` |

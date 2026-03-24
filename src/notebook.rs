@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::metadata::{read_nota_bene, NotaBeneData, NotaBeneView};
+use crate::metadata::{read_ipso, IpsoData, IpsoView};
 
 // ---------------------------------------------------------------------------
 // CellExt — helper methods on nbformat Cell
@@ -16,8 +16,8 @@ pub trait CellExt {
     fn source_str(&self) -> String;
     fn additional(&self) -> &HashMap<String, Value>;
     fn additional_mut(&mut self) -> &mut HashMap<String, Value>;
-    fn nota_bene(&self) -> Option<NotaBeneData>;
-    fn nota_bene_mut(&mut self) -> NotaBeneView<'_>;
+    fn ipso(&self) -> Option<IpsoData>;
+    fn ipso_mut(&mut self) -> IpsoView<'_>;
     fn editor_role(&self) -> Option<String>;
     fn editor_cell_id(&self) -> Option<String>;
 }
@@ -59,17 +59,17 @@ impl CellExt for Cell {
         }
     }
 
-    fn nota_bene(&self) -> Option<NotaBeneData> {
-        read_nota_bene(self.additional())
+    fn ipso(&self) -> Option<IpsoData> {
+        read_ipso(self.additional())
     }
 
-    fn nota_bene_mut(&mut self) -> NotaBeneView<'_> {
-        NotaBeneView::new(self.additional_mut())
+    fn ipso_mut(&mut self) -> IpsoView<'_> {
+        IpsoView::new(self.additional_mut())
     }
 
     fn editor_role(&self) -> Option<String> {
         self.additional()
-            .get("nota-bene")
+            .get("ipso")
             .and_then(|v| v.get("editor"))
             .and_then(|e| e.get("role"))
             .and_then(|r| r.as_str())
@@ -78,7 +78,7 @@ impl CellExt for Cell {
 
     fn editor_cell_id(&self) -> Option<String> {
         self.additional()
-            .get("nota-bene")
+            .get("ipso")
             .and_then(|v| v.get("editor"))
             .and_then(|e| e.get("cell_id"))
             .and_then(|r| r.as_str())
@@ -168,7 +168,7 @@ pub fn blank_cell_metadata() -> CellMetadata {
 // ---------------------------------------------------------------------------
 
 pub fn clear_editor_meta(cell: &mut Cell) {
-    cell.nota_bene_mut().remove_field("editor");
+    cell.ipso_mut().remove_field("editor");
 }
 
 /// Build a new random CellId.
@@ -198,7 +198,7 @@ mod tests {
 
     fn code_cell_with_nb(id: &str, lines: Vec<&str>, nb_val: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), nb_val);
+        meta.additional.insert("ipso".to_string(), nb_val);
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -279,17 +279,17 @@ mod tests {
         assert_eq!(cell.editor_cell_id(), None);
     }
 
-    // --- nota_bene / nota_bene_mut ---
+    // --- ipso / ipso_mut ---
 
     #[test]
-    fn nota_bene_absent_when_no_key() {
-        assert!(code_cell("c1", vec![]).nota_bene().is_none());
+    fn ipso_absent_when_no_key() {
+        assert!(code_cell("c1", vec![]).ipso().is_none());
     }
 
     #[test]
-    fn nota_bene_present_when_key_exists() {
+    fn ipso_present_when_key_exists() {
         let cell = code_cell_with_nb("c1", vec![], json!({"diff": "d"}));
-        assert!(cell.nota_bene().is_some());
+        assert!(cell.ipso().is_some());
     }
 
     // --- clear_editor_meta ---
@@ -302,7 +302,7 @@ mod tests {
             json!({"editor": {"role": "test"}, "diff": "d"}),
         );
         clear_editor_meta(&mut cell);
-        let data = cell.nota_bene().expect("expected Some");
+        let data = cell.ipso().expect("expected Some");
         assert!(!data.extra.contains_key("editor"));
         // diff should still be there
         assert!(data.diff.is_some());

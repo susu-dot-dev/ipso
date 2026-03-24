@@ -1,15 +1,15 @@
-# CLI Test Runner (`nota-bene test`)
+# CLI Test Runner (`ipso test`)
 
 ## Overview
 
-The `nota-bene test` command runs notebook cell tests from the command line. It generates ephemeral test notebooks in memory, executes them via `nbclient` in parallel subprocesses, and reports structured JSON results.
+The `ipso test` command runs notebook cell tests from the command line. It generates ephemeral test notebooks in memory, executes them via `nbclient` in parallel subprocesses, and reports structured JSON results.
 
 No temp files are written. Communication between Rust and Python is entirely via stdin/stdout pipes.
 
 ## CLI Surface
 
 ```
-nota-bene test <notebook.ipynb>
+ipso test <notebook.ipynb>
     --all                    Run all cells with tests
     --filter <expr>          Same filter syntax as view/status/accept
     --python <path>          Python binary (default: "python" from PATH)
@@ -25,13 +25,13 @@ Exit codes:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Rust CLI (nota-bene test)                          │
+│  Rust CLI (ipso test)                          │
 │                                                     │
 │  1. Load notebook, apply filters                    │
 │  2. For each matching cell with a test (parallel):  │
 │     a. Build execution chain (fixtures + sources)   │
 │     b. Generate test notebook JSON in memory        │
-│     c. Spawn: python -m nota_bene._executor         │
+│     c. Spawn: python -m ipso._executor         │
 │        └─ pipe notebook JSON to stdin               │
 │     d. Collect stdout (executed notebook JSON)      │
 │     e. Parse cell outputs, extract results          │
@@ -40,7 +40,7 @@ Exit codes:
          │ stdin: notebook JSON                  ▲ stdout: executed notebook JSON
          ▼                                       │
 ┌─────────────────────────────────────────────────────┐
-│  Python (nota_bene._executor)                       │
+│  Python (ipso._executor)                       │
 │                                                     │
 │  - Read notebook from stdin                         │
 │  - nbclient.NotebookClient(allow_errors=True)       │
@@ -52,7 +52,7 @@ Exit codes:
 │  IPython Kernel (started by nbclient)               │
 │                                                     │
 │  - Runs fixtures, cell sources, test code           │
-│  - nota_bene in-kernel library handles subtests     │
+│  - ipso in-kernel library handles subtests     │
 │  - Results collected via get_test_results()          │
 └─────────────────────────────────────────────────────┘
 ```
@@ -64,25 +64,25 @@ All of step 2 runs in parallel — one subprocess per cell test. Each cell gets 
 The user is responsible for ensuring that `python` (or the binary specified by `--python`) points to an environment with:
 
 - `ipykernel`
-- `nota_bene` (the in-kernel library — which depends on `nbclient`, pulling in `jupyter_client`, `jupyter_core`, `pyzmq`, etc.)
+- `ipso` (the in-kernel library — which depends on `nbclient`, pulling in `jupyter_client`, `jupyter_core`, `pyzmq`, etc.)
 - The notebook's own dependencies (pandas, etc.)
 
-`nbclient` is a direct dependency of the `nota_bene` Python package, so installing `nota_bene` is sufficient.
+`nbclient` is a direct dependency of the `ipso` Python package, so installing `ipso` is sufficient.
 
 ## Test Notebook Generation (Rust)
 
-For a cell at index N in the source notebook, Rust generates a test notebook with the following cells. Each cell carries a `nota_bene_role` tag in its metadata so Rust can map outputs back to their origin after execution.
+For a cell at index N in the source notebook, Rust generates a test notebook with the following cells. Each cell carries a `ipso_role` tag in its metadata so Rust can map outputs back to their origin after execution.
 
-| Phase | Metadata `nota_bene_role` | Content |
+| Phase | Metadata `ipso_role` | Content |
 |-------|---------------------------|---------|
-| setup | `setup` | `import nota_bene` |
+| setup | `setup` | `import ipso` |
 | **For each cell 0..N (including target):** | | |
 | &nbsp;&nbsp;fixtures | `fixture` | Fixture source, sorted by priority (one cell per fixture) |
-| &nbsp;&nbsp;load + execute | `cell_source` | `nota_bene._runner.load_cell(<patched source>)` then `nota_bene.execute_cell()` |
+| &nbsp;&nbsp;load + execute | `cell_source` | `ipso._runner.load_cell(<patched source>)` then `ipso.execute_cell()` |
 | **For the target cell N only:** | | |
 | &nbsp;&nbsp;test | `test` | The test source (subtests, assertions, etc.) |
-| results | `results` | `print("__NB_RESULTS__" + nota_bene._runner.get_test_results())` |
-| teardown | `teardown` | `nota_bene._runner.run_teardowns()` |
+| results | `results` | `print("__NB_RESULTS__" + ipso._runner.get_test_results())` |
+| teardown | `teardown` | `ipso._runner.run_teardowns()` |
 
 Every cell — preceding and target — goes through the same fixtures → `load_cell()` → `execute_cell()` sequence. The target cell simply has additional test code that runs after its `execute_cell()`.
 
@@ -97,11 +97,11 @@ Each fixture’s stored `source` is emitted as a single code cell and executed i
 
 ### Diff application
 
-The patched source for a cell is computed by applying the cell's `nota-bene.diff` (unified diff) to its source. If no diff exists, the unpatched source is used. This reuses the existing `diff_utils::apply_diff` logic in Rust.
+The patched source for a cell is computed by applying the cell's `ipso.diff` (unified diff) to its source. If no diff exists, the unpatched source is used. This reuses the existing `diff_utils::apply_diff` logic in Rust.
 
-## Python Executor (`nota_bene._executor`)
+## Python Executor (`ipso._executor`)
 
-A minimal module (~15 lines) invoked as `python -m nota_bene._executor`:
+A minimal module (~15 lines) invoked as `python -m ipso._executor`:
 
 ```python
 import sys
@@ -136,7 +136,7 @@ After collecting stdout from each subprocess, Rust parses the executed notebook 
 
 ### Happy path
 
-1. Walk cells, find the one with `nota_bene_role: "results"`.
+1. Walk cells, find the one with `ipso_role: "results"`.
 2. In its `outputs` array, find the `stream` output with `name: "stdout"`.
 3. Look for the `__NB_RESULTS__` prefix in the text. Parse the JSON after the prefix.
 4. This gives the subtest results list directly from `_runner.get_test_results()`.
@@ -153,7 +153,7 @@ If `get_test_results()` returns `[]` (no `subtest()` calls were made):
 If no `__NB_RESULTS__` marker is found (a cell before the results cell raised and `allow_errors=True` was somehow not effective, or the kernel died):
 
 1. Walk cells looking for `output_type: "error"` in outputs.
-2. Use the `nota_bene_role` and `source_cell_id` metadata to identify which phase failed.
+2. Use the `ipso_role` and `source_cell_id` metadata to identify which phase failed.
 3. Construct an error result (see output format below).
 
 ### Subprocess failure
@@ -207,20 +207,20 @@ If the Python process exits with a non-zero code or produces no stdout:
 
 ### Relationship to `edit.rs`
 
-The test notebook generation (`test_runner.rs`) and the editor notebook generation (`edit.rs`) share the same high-level traversal — iterate code cells, read nota-bene metadata, sort fixtures by priority, compute patched source. However, the cell content they produce is fundamentally different:
+The test notebook generation (`test_runner.rs`) and the editor notebook generation (`edit.rs`) share the same high-level traversal — iterate code cells, read ipso metadata, sort fixtures by priority, compute patched source. However, the cell content they produce is fundamentally different:
 
 | Concern | `edit.rs` (editor notebook) | `test_runner.rs` (test notebook) |
 |---------|----------------------------|----------------------------------|
 | **Purpose** | Human editing in Jupyter | Machine execution via nbclient |
-| **Setup cell** | `import nota_bene; nota_bene.register_nb_skip()` | `import nota_bene` |
+| **Setup cell** | `import ipso; ipso.register_ipso_skip()` | `import ipso` |
 | **Section headers** | Markdown cells with staleness, hints, and optional `guide` labels | None |
 | **Fixture cells** | Raw source with `# fixture:` / `# description:` / `# priority:` comment headers | Same fixture `source` as stored in metadata (one code cell per fixture) |
 | **Stub fixtures** | Emitted for cells with no fixtures (editable placeholder) | Not emitted — nothing to run |
-| **Source cells** | Patched source as editable code cell, preserving original cell ID | `nota_bene._runner.load_cell(<json>)\nnota_bene.execute_cell()` |
+| **Source cells** | Patched source as editable code cell, preserving original cell ID | `ipso._runner.load_cell(<json>)\nipso.execute_cell()` |
 | **Cells without metadata** | Passthrough (original source, editable) | Same `load_cell()` + `execute_cell()` |
-| **Test cells** | Prefixed with `%%nb_skip`, `# test: <name>` header | Raw test source, no prefix |
-| **Results cell** | None | `print("__NB_RESULTS__" + nota_bene._runner.get_test_results())` |
-| **Teardown cell** | None | `nota_bene._runner.run_teardowns()` |
+| **Test cells** | Prefixed with `%%ipso_skip`, `# test: <name>` header | Raw test source, no prefix |
+| **Results cell** | None | `print("__NB_RESULTS__" + ipso._runner.get_test_results())` |
+| **Teardown cell** | None | `ipso._runner.run_teardowns()` |
 | **Notebook metadata** | `source_shas` for conflict detection | None |
 
 **Do not refactor `edit.rs`.** The traversal logic is ~30 lines and the two flows produce entirely different cells. `test_runner.rs` should duplicate the traversal (iterate cells, check metadata, sort fixtures, apply diffs) and build its own cell constructors independently. The flows will likely diverge further over time.
@@ -236,34 +236,34 @@ Two main functions:
 Generates a test notebook for a single cell. Walks cells 0..=target_idx:
 
 ```
-cell 0:  import nota_bene
+cell 0:  import ipso
 
 for each code cell 0..=target_idx:
-    if cell has fixtures (from nota-bene metadata):
+    if cell has fixtures (from ipso metadata):
         for each fixture sorted by priority:
             emit cell: {fixture.source as-is}
-            metadata: { nota_bene_role: "fixture", source_cell_id, fixture_name }
+            metadata: { ipso_role: "fixture", source_cell_id, fixture_name }
 
     compute patched_source:
         if cell has diff: apply_diff(cell.source, diff)
         else: cell.source
 
-    emit cell: nota_bene._runner.load_cell({json_dumps(patched_source)})\nnota_bene.execute_cell()
-    metadata: { nota_bene_role: "cell_source", source_cell_id }
+    emit cell: ipso._runner.load_cell({json_dumps(patched_source)})\nipso.execute_cell()
+    metadata: { ipso_role: "cell_source", source_cell_id }
 
 if target cell has test:
     emit cell: {test.source}
-    metadata: { nota_bene_role: "test", source_cell_id }
+    metadata: { ipso_role: "test", source_cell_id }
 
-emit cell: print("__NB_RESULTS__" + nota_bene._runner.get_test_results())
-metadata: { nota_bene_role: "results" }
+emit cell: print("__NB_RESULTS__" + ipso._runner.get_test_results())
+metadata: { ipso_role: "results" }
 
-emit cell: nota_bene._runner.run_teardowns()
-metadata: { nota_bene_role: "teardown" }
+emit cell: ipso._runner.run_teardowns()
+metadata: { ipso_role: "teardown" }
 ```
 
 Notes:
-- Cells without nota-bene metadata still get `load_cell` + `execute_cell` (their unpatched source runs in the cumulative chain).
+- Cells without ipso metadata still get `load_cell` + `execute_cell` (their unpatched source runs in the cumulative chain).
 - Markdown and raw cells are skipped entirely (same as `edit.rs`).
 - The notebook metadata is minimal — just `kernelspec` copied from the source notebook.
 
@@ -271,8 +271,8 @@ Notes:
 
 Parses the executed notebook returned by the Python subprocess:
 
-1. Find the cell with `nota_bene_role: "results"`. Check its outputs for `__NB_RESULTS__` in stdout stream output. Parse the JSON suffix → subtest list.
-2. If results cell has no output or has an error: walk all cells looking for `output_type: "error"` outputs. Use `nota_bene_role` metadata to identify the phase. Construct an error result.
+1. Find the cell with `ipso_role: "results"`. Check its outputs for `__NB_RESULTS__` in stdout stream output. Parse the JSON suffix → subtest list.
+2. If results cell has no output or has an error: walk all cells looking for `output_type: "error"` outputs. Use `ipso_role` metadata to identify the phase. Construct an error result.
 3. Handle the implicit subtest case: if results JSON is `[]` and the test cell has no error, create `[{name: test_name, passed: true, ...}]`. If the test cell has an error, create a failed implicit subtest from the error output.
 
 #### `src/main.rs` changes
@@ -296,10 +296,10 @@ Test {
 Add `run_test()`:
 
 1. Load notebook, parse filters.
-2. Collect indices of code cells that have a `nota-bene.test` and match the filters. Require `--all` or `--filter` (same pattern as `accept`).
+2. Collect indices of code cells that have a `ipso.test` and match the filters. Require `--all` or `--filter` (same pattern as `accept`).
 3. For each matching cell, call `build_test_notebook()` to get the notebook JSON string.
 4. Spawn all subprocesses in parallel:
-   - Command: `{python} -m nota_bene._executor {timeout}`
+   - Command: `{python} -m ipso._executor {timeout}`
    - Pipe notebook JSON to stdin.
    - Collect stdout and stderr.
    - Use `std::thread::spawn` or similar to run them concurrently.
@@ -309,16 +309,16 @@ Add `run_test()`:
 
 ### Python — new files
 
-#### `nota_bene/_executor/__init__.py`
+#### `ipso/_executor/__init__.py`
 
 Empty.
 
-#### `nota_bene/_executor/__main__.py`
+#### `ipso/_executor/__main__.py`
 
 ```python
 """Execute a notebook from stdin via nbclient, write the result to stdout.
 
-Invoked by the nota-bene Rust CLI as: python -m nota_bene._executor [timeout]
+Invoked by the ipso Rust CLI as: python -m ipso._executor [timeout]
 """
 import sys
 
@@ -338,7 +338,7 @@ nbformat.write(nb, sys.stdout)
 
 ### Python — dependency change
 
-Add `nbclient` to `nota-bene/pyproject.toml` under `[project.dependencies]`.
+Add `nbclient` to `ipso/pyproject.toml` under `[project.dependencies]`.
 
 ## Future: Remote Kernels
 

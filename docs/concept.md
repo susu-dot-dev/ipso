@@ -1,4 +1,4 @@
-Important: This document contains the original inspiration for nota-bene. It has been superceeded by the other documents in the codebase. Where there are discrepancies in the implementation, the content in this file should be considered incorrect. This file will likely get deleted at some point.
+Important: This document contains the original inspiration for ipso. It has been superceeded by the other documents in the codebase. Where there are discrepancies in the implementation, the content in this file should be considered incorrect. This file will likely get deleted at some point.
 
 # Problem
 How do you test a notebook?
@@ -19,16 +19,16 @@ However, AI can also be the solution to this problem. Writing code is cheap. Kee
 
 # Basic concept
 Jupyter notebooks let us store [arbitrary metadata](https://nbformat.readthedocs.io/en/latest/format_description.html) at both the notebook level, as well as per-cell. We'll use that to store the following per-cell data:
-- nota-bene.fixtures: Test fixtures which create variables, functions, or mocks needed to enable tests to run. The dict key is the fixture name, and each fixture has:
+- ipso.fixtures: Test fixtures which create variables, functions, or mocks needed to enable tests to run. The dict key is the fixture name, and each fixture has:
     - description: Information about the fixture, what it does, and its relation to the notebook
     - update_when: Instructions to the AI about when the fixture needs to be updated and what is required to keep it in sync with the production code
     - depends: other fixtures that must be run before this fixture
     - source: the fixture Python content
-- nota-bene.diff: diff-style patch, containing any changes needed to adjust the cell source to use the fixtures or otherwise be aware of the test environment
-- nota-bene.test: tests which use assertions to validate that the cell performed correctly (e.g. checking state or cell outputs). The value is a dict with two keys:
+- ipso.diff: diff-style patch, containing any changes needed to adjust the cell source to use the fixtures or otherwise be aware of the test environment
+- ipso.test: tests which use assertions to validate that the cell performed correctly (e.g. checking state or cell outputs). The value is a dict with two keys:
     - depends: Other fixture the test depends on to run
     - assertions: Python code to validate the output is correct. 
-- nota-bene.sha1: Sha of the cell content when the nota-bene fields were last validated to work properly
+- ipso.sha1: Sha of the cell content when the ipso fields were last validated to work properly
 
 Let's see this in a short example. Given this cell content:
 
@@ -116,22 +116,22 @@ shell.user_ns["_cell_success"] = res.success
 # Using LSPs to provide instant feedback to AI frameworks
 Agent frameworks, such as opencode, use LSP integrations to provide realtime feedback to AI. This is how AI knows when it generates code that doesn't compile, and then it fixes it without any user input.
 
-As long as it's fast enough, we can use this to provide in-the-loop feedback to the AI about the state of the nota-bene tests. The feedback can directly provide the result, with a suggestion to use the MCP tools to modify the tests as needed, or to validate that the tests are still correct after editing the cells.
+As long as it's fast enough, we can use this to provide in-the-loop feedback to the AI about the state of the ipso tests. The feedback can directly provide the result, with a suggestion to use the MCP tools to modify the tests as needed, or to validate that the tests are still correct after editing the cells.
 
 The LSP integration isn't strictly required and has drawbacks. An alternative is to add information to the agent's context so it is encouraged to call the correct MCP tools after modifying a cell. That has other tradeoffs; we can experiment to find the best approach.
 
-# Using MCP tools to guide AI development of nota-bene tests
+# Using MCP tools to guide AI development of ipso tests
 We can create MCP tools to navigate the fixtures, the tests, and the assertions as necessary. Some examples:
 
 - materialize: combine all the setup and test code into a single python file (or string rather), so that AI can easily see the entire test - including setup and patching - to help the AI guide the setup
 
 - create_fixture: Create a fixture for a given cell
 - create_test: Adds or updates the cell tests
-- keep_updated: Return a list of all the nota-bene cells which are potentially out of date, as well as descriptions about when the files should be updated
+- keep_updated: Return a list of all the ipso cells which are potentially out of date, as well as descriptions about when the files should be updated
 - run_tests: Run all or some of the cells to validate they work
 
 # Putting it all together
-Using some combination of llms.txt, MCP tools, skills, or other context munging, the Agent framework is aware of nota-bene. When the agent updates the notebook cells, it knows that it also needs to update the nota-bene tests as well. So, it uses the MCP tools to create the fixtures and tests. Later on, as more edits are made, the tests are run in isolated per-cell kernels (perhaps using LSP, or hooking into the cell execution of the primary notebook, or manually via MCP) and provide feedback in the loop about the test execution
+Using some combination of llms.txt, MCP tools, skills, or other context munging, the Agent framework is aware of ipso. When the agent updates the notebook cells, it knows that it also needs to update the ipso tests as well. So, it uses the MCP tools to create the fixtures and tests. Later on, as more edits are made, the tests are run in isolated per-cell kernels (perhaps using LSP, or hooking into the cell execution of the primary notebook, or manually via MCP) and provide feedback in the loop about the test execution
 
 # Bonus: Playgrounds
 The ability to recreate an environment, quickly, is really powerful for developing new features. We can create many kernels, run the fixtures in order to recreate the global state from the preceding cells. However, instead of running the cell & tests (since there isn't cell code yet), we can just let the AI play around, write code, and execute to make sure things work. This is the agentic REPL: parallel, ephemeral, and able to prove the basic case without running a full pipeline.

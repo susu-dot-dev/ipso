@@ -15,17 +15,17 @@ cells have no shas (`NotImplemented` staleness) or stale shas if source was modi
 
 Fix: after `apply_editor_to_source()` in `run_edit_continue()`, call a new
 `accept_cells()` function to recompute and store shas for all cells that have
-nota-bene metadata. Going through the editor IS the review; `--continue` should
+ipso metadata. Going through the editor IS the review; `--continue` should
 stamp the shas.
 
 ---
 
-## Change 1: Simplify `NotaBeneData` in `metadata.rs`
+## Change 1: Simplify `IpsoData` in `metadata.rs`
 
 ### Before
 
 ```rust
-pub struct NotaBeneData {
+pub struct IpsoData {
     pub fixtures: Option<Option<IndexMap<String, Fixture>>>,
     pub diff: Option<Option<String>>,
     pub test: Option<Option<TestMeta>>,
@@ -40,7 +40,7 @@ to handle the three-state serialization.
 ### After
 
 ```rust
-pub struct NotaBeneData {
+pub struct IpsoData {
     pub fixtures: Option<IndexMap<String, Fixture>>,
     pub diff: Option<String>,
     pub test: Option<TestMeta>,
@@ -57,30 +57,30 @@ the key is omitted (not written as `null`). This is a breaking change to the
 on-disk format for notebooks that have explicit `null` values — that's acceptable
 since we're not targeting backwards compatibility.
 
-### `NotaBeneMeta` enum removed
+### `IpsoMeta` enum removed
 
-The `NotaBeneMeta` enum (`Absent` / `Present`) is removed entirely. All callers
-that currently match on it switch to `Option<NotaBeneData>`:
+The `IpsoMeta` enum (`Absent` / `Present`) is removed entirely. All callers
+that currently match on it switch to `Option<IpsoData>`:
 
 ```rust
 // Before
-pub fn nota_bene(&self) -> NotaBeneMeta { ... }
+pub fn ipso(&self) -> IpsoMeta { ... }
 
 // After
-pub fn nota_bene(&self) -> Option<NotaBeneData> { ... }
+pub fn ipso(&self) -> Option<IpsoData> { ... }
 ```
 
-`None` means no `"nota-bene"` key in the cell metadata.
+`None` means no `"ipso"` key in the cell metadata.
 `Some(data)` means the key exists; fields inside may be `None`.
 
 The edit flow currently uses `Present` vs `Absent` to decide whether to emit a
 section header (cells with metadata get the full fixture/test section; cells without
 get a passthrough). This logic is preserved but simplified: emit a full section if
-`nota_bene()` returns `Some(_)`, emit a passthrough if it returns `None`. A cell
-that has a nota-bene key with all-None fields still gets a full section — that is
+`ipso()` returns `Some(_)`, emit a passthrough if it returns `None`. A cell
+that has a ipso key with all-None fields still gets a full section — that is
 correct, it means the cell has been through the editor before.
 
-### `NotaBeneView` changes
+### `IpsoView` changes
 
 Remove `clear_fixtures()`, `clear_diff()`, `clear_test()` — callers can just call
 `set_fixtures(None)` etc. The distinction was only needed to differentiate between
@@ -125,14 +125,14 @@ Remove from `apply_editor_to_source()`:
 - The `prev_nb` variable
 - The `mark_addressed()` call (no longer needed — shas serve this purpose)
 
-### Handling cells with no nota-bene metadata
+### Handling cells with no ipso metadata
 
-Cells that return `None` from `nota_bene()` and have no content written (no
-fixtures, no test, no diff) should remain untouched — don't create a nota-bene
+Cells that return `None` from `ipso()` and have no content written (no
+fixtures, no test, no diff) should remain untouched — don't create a ipso
 key. Code cells genuinely not under test should stay clean.
 
-Only write a nota-bene key if at least one field (fixtures, diff, or test) has
-content, or if the cell already had a nota-bene key (`nota_bene()` returned
+Only write a ipso key if at least one field (fixtures, diff, or test) has
+content, or if the cell already had a ipso key (`ipso()` returned
 `Some(_)`).
 
 ---
@@ -158,9 +158,9 @@ a stub is emitted either way.
 New public function:
 
 ```rust
-/// Recompute and store shas for cells with nota-bene metadata.
+/// Recompute and store shas for cells with ipso metadata.
 /// If `cell_indices` is Some, only those indices are accepted.
-/// If None, all cells with nota-bene metadata are accepted.
+/// If None, all cells with ipso metadata are accepted.
 pub fn accept_cells(nb: &mut Notebook, cell_indices: Option<&[usize]>) {
     let snapshot = compute_snapshot(nb);
     for (idx, cell) in nb.cells.iter_mut().enumerate() {
@@ -169,15 +169,15 @@ pub fn accept_cells(nb: &mut Notebook, cell_indices: Option<&[usize]>) {
                 continue;
             }
         }
-        if cell.nota_bene().is_some() {
+        if cell.ipso().is_some() {
             let shas_slice = snapshot[..=idx].to_vec();
-            cell.nota_bene_mut().set_shas(shas_slice);
+            cell.ipso_mut().set_shas(shas_slice);
         }
     }
 }
 ```
 
-Add `set_shas()` to `NotaBeneView` in `metadata.rs`:
+Add `set_shas()` to `IpsoView` in `metadata.rs`:
 
 ```rust
 pub fn set_shas(&mut self, shas: Vec<ShaEntry>) {
@@ -247,7 +247,7 @@ fn run_edit_continue(source_path: PathBuf, force: bool) -> Result<()> {
 
     save::apply_editor_to_source(&mut source_nb, &editor_nb)?;
 
-    // NEW: stamp shas on all cells that now have nota-bene metadata
+    // NEW: stamp shas on all cells that now have ipso metadata
     shas::accept_cells(&mut source_nb, None);
 
     save_notebook(&source_nb, &source_path)?;
@@ -260,9 +260,9 @@ fn run_edit_continue(source_path: PathBuf, force: bool) -> Result<()> {
 
 ## Implementation order
 
-1. Simplify `NotaBeneData` in `metadata.rs` — change `Option<Option<T>>` to
+1. Simplify `IpsoData` in `metadata.rs` — change `Option<Option<T>>` to
    `Option<T>`, remove `nullable_*` serde modules, remove `clear_*` methods,
-   add `set_shas()` to `NotaBeneView`
+   add `set_shas()` to `IpsoView`
 2. Update `edit.rs` — flatten `Some(Some(x))` patterns
 3. Simplify `save.rs` — remove three-state preservation logic, `had_fixture_cells`,
    `had_test_cell`, `prev_nb` tracking, `mark_addressed()`
