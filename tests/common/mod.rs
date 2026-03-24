@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-/// Path to the compiled `nota-bene` binary, set by Cargo at test-build time.
+/// Path to the compiled `ipso` binary, set by Cargo at test-build time.
 pub fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_nota-bene"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ipso"))
 }
 
 /// Path to the Python interpreter inside the test venv.

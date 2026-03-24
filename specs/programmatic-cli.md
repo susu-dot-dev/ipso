@@ -1,6 +1,6 @@
 # Programmatic CLI Access
 
-This spec describes the programmatic CLI interface for driving nota-bene notebook
+This spec describes the programmatic CLI interface for driving ipso notebook
 updates without going through the interactive editor flow. The target audience is
 scripts, AI agents, and other tools that need to read and write notebook metadata
 without human involvement.
@@ -197,7 +197,7 @@ nb view notebook.ipynb --fields source,test
   "diff": "--- a/cell\n+++ b/cell\n@@ -1 +1 @@\n-df.read_csv('huge.csv')\n+df",
   "test": {
     "name": "test_total",
-    "source": "nota_bene.execute_cell()\nassert total == 6"
+    "source": "ipso.execute_cell()\nassert total == 6"
   },
   "status": {
     "valid": false,
@@ -369,7 +369,7 @@ nb update notebook.ipynb --data '{
   "cell_id": "compute-total",
   "test": {
     "name": "test_total",
-    "source": "nota_bene.execute_cell()\nassert total == 6"
+    "source": "ipso.execute_cell()\nassert total == 6"
   }
 }'
 ```
@@ -416,7 +416,7 @@ Where `changes.json` is an array:
     "cell_id": "compute-total",
     "test": {
       "name": "test_total",
-      "source": "nota_bene.execute_cell()\nassert total == 6"
+      "source": "ipso.execute_cell()\nassert total == 6"
     }
   }
 ]

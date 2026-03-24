@@ -88,10 +88,10 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
         }
 
         let cell_id = cell.cell_id_str().to_string();
-        let nb_meta = cell.nota_bene();
+        let ipso_meta = cell.ipso();
 
         // Fixtures (only if metadata present and fixtures are defined)
-        if let Some(ref data) = nb_meta {
+        if let Some(ref data) = ipso_meta {
             if let Some(fixtures) = &data.fixtures {
                 let mut sorted: Vec<(&String, &Fixture)> = fixtures.iter().collect();
                 sorted.sort_by_key(|(_, f)| f.priority);
@@ -102,7 +102,7 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
         }
 
         // Patched source
-        let patched_source = match nb_meta.as_ref().and_then(|d| d.diff.as_deref()) {
+        let patched_source = match ipso_meta.as_ref().and_then(|d| d.diff.as_deref()) {
             Some(diff) => {
                 apply_diff(&cell.source_str(), diff).unwrap_or_else(|_| cell.source_str())
             }
@@ -113,7 +113,7 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
 
         // Test cell (target only)
         if idx == target_idx {
-            if let Some(ref data) = nb_meta {
+            if let Some(ref data) = ipso_meta {
                 if let Some(test) = &data.test {
                     cells.push(make_test_cell(&cell_id, &test.source));
                 }
@@ -126,8 +126,8 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
     cells.push(make_teardown_cell());
 
     let mut metadata = source.metadata.clone();
-    // Strip any nota-bene notebook-level metadata — not needed for execution
-    metadata.additional.remove("nota-bene");
+    // Strip any ipso notebook-level metadata — not needed for execution
+    metadata.additional.remove("ipso");
 
     Ok(Notebook {
         metadata,
@@ -143,15 +143,13 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
 
 fn make_setup_cell() -> Cell {
     let mut meta = blank_cell_metadata();
-    meta.additional.insert(
-        "nota-bene".to_string(),
-        json!({"runner": {"role": "setup"}}),
-    );
+    meta.additional
+        .insert("ipso".to_string(), json!({"runner": {"role": "setup"}}));
     Cell::Code {
         id: new_cell_id(),
         metadata: meta,
         execution_count: None,
-        source: split_source("import nota_bene"),
+        source: split_source("import ipso"),
         outputs: vec![],
     }
 }
@@ -160,7 +158,7 @@ fn make_fixture_cell(source_cell_id: &str, fixture_name: &str, fixture: &Fixture
     let source = fixture.source.clone();
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({
             "runner": {
                 "role": "fixture",
@@ -181,10 +179,10 @@ fn make_fixture_cell(source_cell_id: &str, fixture_name: &str, fixture: &Fixture
 fn make_cell_source_cell(source_cell_id: &str, patched_source: &str) -> Cell {
     // Encode the patched source as a JSON string literal so it's safe to embed.
     let encoded = serde_json::to_string(patched_source).unwrap_or_else(|_| "\"\"".to_string());
-    let source = format!("nota_bene._runner.load_cell({encoded})\nnota_bene.execute_cell()");
+    let source = format!("ipso._runner.load_cell({encoded})\nipso.execute_cell()");
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({
             "runner": {
                 "role": "cell_source",
@@ -204,7 +202,7 @@ fn make_cell_source_cell(source_cell_id: &str, patched_source: &str) -> Cell {
 fn make_test_cell(source_cell_id: &str, test_source: &str) -> Cell {
     let mut meta = blank_cell_metadata();
     meta.additional.insert(
-        "nota-bene".to_string(),
+        "ipso".to_string(),
         json!({
             "runner": {
                 "role": "test",
@@ -223,16 +221,14 @@ fn make_test_cell(source_cell_id: &str, test_source: &str) -> Cell {
 
 fn make_results_cell() -> Cell {
     let mut meta = blank_cell_metadata();
-    meta.additional.insert(
-        "nota-bene".to_string(),
-        json!({"runner": {"role": "results"}}),
-    );
+    meta.additional
+        .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
     Cell::Code {
         id: new_cell_id(),
         metadata: meta,
         execution_count: None,
         source: split_source(
-            "import json as _json\nprint(\"__NB_RESULTS__\" + nota_bene._runner.get_test_results())",
+            "import json as _json\nprint(\"__IPSO_RESULTS__\" + ipso._runner.get_test_results())",
         ),
         outputs: vec![],
     }
@@ -240,15 +236,13 @@ fn make_results_cell() -> Cell {
 
 fn make_teardown_cell() -> Cell {
     let mut meta = blank_cell_metadata();
-    meta.additional.insert(
-        "nota-bene".to_string(),
-        json!({"runner": {"role": "teardown"}}),
-    );
+    meta.additional
+        .insert("ipso".to_string(), json!({"runner": {"role": "teardown"}}));
     Cell::Code {
         id: new_cell_id(),
         metadata: meta,
         execution_count: None,
-        source: split_source("nota_bene._runner.run_teardowns()"),
+        source: split_source("ipso._runner.run_teardowns()"),
         outputs: vec![],
     }
 }
@@ -257,7 +251,7 @@ fn make_teardown_cell() -> Cell {
 // Result extraction
 // ---------------------------------------------------------------------------
 
-const RESULTS_MARKER: &str = "__NB_RESULTS__";
+const RESULTS_MARKER: &str = "__IPSO_RESULTS__";
 
 /// Strip ANSI CSI / OSC sequences and other C0 controls (except `\n` and `\t`)
 /// from kernel-originated text so CLI JSON and pytest output stay readable.
@@ -316,9 +310,9 @@ fn sanitize_kernel_text(s: &str) -> String {
     out
 }
 
-/// Extract role from a cell's nota-bene runner metadata.
+/// Extract role from a cell's ipso runner metadata.
 fn runner_role(cell: &Cell) -> Option<String> {
-    let nb = cell.additional().get("nota-bene")?;
+    let nb = cell.additional().get("ipso")?;
     nb.get("runner")?
         .get("role")?
         .as_str()
@@ -326,7 +320,7 @@ fn runner_role(cell: &Cell) -> Option<String> {
 }
 
 fn runner_source_cell_id(cell: &Cell) -> Option<String> {
-    let nb = cell.additional().get("nota-bene")?;
+    let nb = cell.additional().get("ipso")?;
     nb.get("runner")?
         .get("source_cell_id")?
         .as_str()
@@ -334,7 +328,7 @@ fn runner_source_cell_id(cell: &Cell) -> Option<String> {
 }
 
 fn runner_fixture_name(cell: &Cell) -> Option<String> {
-    let nb = cell.additional().get("nota-bene")?;
+    let nb = cell.additional().get("ipso")?;
     nb.get("runner")?
         .get("fixture_name")?
         .as_str()
@@ -403,7 +397,7 @@ fn find_first_cell_error(executed: &Notebook) -> Option<TestError> {
     None
 }
 
-/// Scan the results cell's stdout for the `__NB_RESULTS__` marker and return
+/// Scan the results cell's stdout for the `__IPSO_RESULTS__` marker and return
 /// the JSON substring that follows it, or `None` if absent.
 fn find_results_json(executed: &Notebook) -> Option<String> {
     let results_cell = executed
@@ -479,7 +473,7 @@ pub fn extract_results(executed: &Notebook, cell_id: &str, test_name: &str) -> C
         return make_error(error);
     }
 
-    // Find the __NB_RESULTS__ JSON, or fall back to any cell error / sentinel.
+    // Find the __IPSO_RESULTS__ JSON, or fall back to any cell error / sentinel.
     let Some(json_str) = find_results_json(executed) else {
         let has_results_cell = executed
             .cells
@@ -589,7 +583,7 @@ pub fn run_executor_subprocess(
     use std::process::{Command, Stdio};
 
     let mut child = match Command::new(python)
-        .args(["-m", "nota_bene._executor", timeout_str])
+        .args(["-m", "ipso._executor", timeout_str])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -689,7 +683,7 @@ mod tests {
 
     fn cell_with_meta(id: &str, source: &str, meta_json: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), meta_json);
+        meta.additional.insert("ipso".to_string(), meta_json);
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -725,10 +719,10 @@ mod tests {
     }
 
     #[test]
-    fn setup_imports_nota_bene() {
+    fn setup_imports_ipso() {
         let nb = notebook_from(vec![code_cell("c1", "x = 1")]);
         let test_nb = build_test_notebook(&nb, 0).unwrap();
-        assert_eq!(test_nb.cells[0].source_str(), "import nota_bene");
+        assert_eq!(test_nb.cells[0].source_str(), "import ipso");
     }
 
     #[test]
@@ -891,10 +885,9 @@ mod tests {
 
     fn make_executed_nb_with_results(results_json: &str) -> Notebook {
         let mut results_cell_meta = blank_cell_metadata();
-        results_cell_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_cell_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_cell_meta,
@@ -943,7 +936,7 @@ mod tests {
         // Empty results list + error on test cell → implicit fail
         let mut test_cell_meta = blank_cell_metadata();
         test_cell_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "test", "source_cell_id": "c1"}}),
         );
         let test_cell = Cell::Code {
@@ -958,10 +951,9 @@ mod tests {
             })],
         };
         let mut results_cell_meta = blank_cell_metadata();
-        results_cell_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_cell_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_cell_meta,
@@ -993,7 +985,7 @@ mod tests {
         // No results cell output — fixture errored before results could run.
         let mut fixture_meta = blank_cell_metadata();
         fixture_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({
                 "runner": {
                     "role": "fixture",
@@ -1015,10 +1007,9 @@ mod tests {
         };
         // Results cell with no output (never ran)
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_meta,
@@ -1109,7 +1100,7 @@ mod tests {
     fn fixture_error_takes_priority_over_results_output() {
         let mut fixture_meta = blank_cell_metadata();
         fixture_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({
                 "runner": {
                     "role": "fixture",
@@ -1131,10 +1122,9 @@ mod tests {
         };
         // Results cell ran anyway (allow_errors=True) and output passing results
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_meta,
@@ -1165,7 +1155,7 @@ mod tests {
     fn cell_source_error_takes_priority_over_results_output() {
         let mut cell_source_meta = blank_cell_metadata();
         cell_source_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "cell_source", "source_cell_id": "upstream"}}),
         );
         let cell_source_cell = Cell::Code {
@@ -1180,10 +1170,9 @@ mod tests {
             })],
         };
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_meta,
@@ -1213,7 +1202,7 @@ mod tests {
     fn test_cell_error_does_not_trigger_setup_error() {
         let mut test_meta = blank_cell_metadata();
         test_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "test", "source_cell_id": "c1"}}),
         );
         let test_cell = Cell::Code {
@@ -1228,10 +1217,9 @@ mod tests {
             })],
         };
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_meta,
@@ -1258,14 +1246,14 @@ mod tests {
 
     // --- no-results-output branches (branches 2-5) ---
 
-    /// Results cell is present but produced no __NB_RESULTS__ output, and
+    /// Results cell is present but produced no __IPSO_RESULTS__ output, and
     /// another cell (e.g. the test cell) has an error output → that error
     /// is surfaced.
     #[test]
     fn results_cell_present_no_marker_with_cell_error() {
         let mut test_meta = blank_cell_metadata();
         test_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "test", "source_cell_id": "c1"}}),
         );
         let test_cell = Cell::Code {
@@ -1280,10 +1268,9 @@ mod tests {
             })],
         };
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         // Results cell ran but printed nothing useful (no marker)
         let results_cell = Cell::Code {
             id: cid("res"),
@@ -1303,15 +1290,14 @@ mod tests {
         }
     }
 
-    /// Results cell is present but produced no __NB_RESULTS__ output and no
+    /// Results cell is present but produced no __IPSO_RESULTS__ output and no
     /// other cell has an error → "Results cell produced no output".
     #[test]
     fn results_cell_present_no_marker_no_error() {
         let mut results_meta = blank_cell_metadata();
-        results_meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({"runner": {"role": "results"}}),
-        );
+        results_meta
+            .additional
+            .insert("ipso".to_string(), json!({"runner": {"role": "results"}}));
         let results_cell = Cell::Code {
             id: cid("res"),
             metadata: results_meta,
@@ -1336,7 +1322,7 @@ mod tests {
     fn results_cell_missing_with_cell_error() {
         let mut cell_meta = blank_cell_metadata();
         cell_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "cell_source", "source_cell_id": "c1"}}),
         );
         // Note: this is NOT a fixture/cell_source error — it's on a cell_source
@@ -1344,7 +1330,7 @@ mod tests {
         // cell is absent. Use an unknown role so it bypasses find_setup_error.
         let mut other_meta = blank_cell_metadata();
         other_meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({"runner": {"role": "unknown_role"}}),
         );
         let erroring_cell = Cell::Code {

@@ -26,11 +26,11 @@ The AI now has a focused list. It reads the diffs for the changed cells, inspect
 
 ## How It Works
 
-Each cell stores a `shas` subkey in its `nota-bene` metadata: an ordered snapshot of every cell from the first through itself, as they were when the cell's fixtures were last validated.
+Each cell stores a `shas` subkey in its `ipso` metadata: an ordered snapshot of every cell from the first through itself, as they were when the cell's fixtures were last validated.
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "fixtures": { ... },
     "diff": "...",
     "test": { ... },
@@ -74,11 +74,11 @@ For each cell, construct the following object:
 ```python
 {
     "source": cell["source"],
-    "nota-bene": {k: v for k, v in cell["metadata"].get("nota-bene", {}).items() if k != "shas"}
+    "ipso": {k: v for k, v in cell["metadata"].get("ipso", {}).items() if k != "shas"}
 }
 ```
 
-If the cell has no `nota-bene` metadata, the `nota-bene` value is an empty dict `{}`. The `shas` key is excluded to avoid a circular dependency — the hash must be computable before `shas` is written.
+If the cell has no `ipso` metadata, the `ipso` value is an empty dict `{}`. The `shas` key is excluded to avoid a circular dependency — the hash must be computable before `shas` is written.
 
 Serialize to canonical JSON (deterministic key ordering, no whitespace):
 
@@ -92,7 +92,7 @@ sha = hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
 ### `shas` Array
 
-Each cell's `nota-bene` metadata contains a `shas` key: an ordered array of dicts representing the notebook's cell ordering at the time the cell was last validated. The array contains one entry per cell from the first cell through the current cell (inclusive), **in notebook order at validation time**:
+Each cell's `ipso` metadata contains a `shas` key: an ordered array of dicts representing the notebook's cell ordering at the time the cell was last validated. The array contains one entry per cell from the first cell through the current cell (inclusive), **in notebook order at validation time**:
 
 ```json
 "shas": [

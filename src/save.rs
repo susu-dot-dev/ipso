@@ -36,7 +36,7 @@ pub fn check_conflicts(source: &Notebook, editor: &Notebook) -> Result<()> {
     let stored_shas: Vec<ShaEntry> = editor
         .metadata
         .additional
-        .get("nota-bene")
+        .get("ipso")
         .and_then(|v| v.get("editor"))
         .and_then(|v| v.get("source_shas"))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -114,7 +114,7 @@ pub fn check_conflicts(source: &Notebook, editor: &Notebook) -> Result<()> {
         let msg = errors.join("\n  ");
         bail!(
             "Cannot apply: source notebook has changed since `edit` was run:\n  {msg}\n\n\
-             Use `nota-bene edit --continue --force` to discard source changes and apply anyway."
+             Use `ipso edit --continue --force` to discard source changes and apply anyway."
         );
     }
 
@@ -157,14 +157,14 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
 
         let original_source = src_cell.source_str();
 
-        // Track whether the cell already had nota-bene metadata, so we can
+        // Track whether the cell already had ipso metadata, so we can
         // preserve the key even when all fields end up absent.
-        let had_nb = src_cell.nota_bene().is_some();
+        let had_ipso = src_cell.ipso().is_some();
 
         // Strip any editor subkey that may have been left.
         clear_editor_meta(src_cell);
 
-        let mut view = src_cell.nota_bene_mut();
+        let mut view = src_cell.ipso_mut();
 
         // ---- fixtures -------------------------------------------------------
         if !section.fixtures.is_empty() {
@@ -197,18 +197,18 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
             view.set_test(None); // removes the key
         }
 
-        // Preserve the nota-bene key if the cell already had it, even if all
+        // Preserve the ipso key if the cell already had it, even if all
         // sub-keys ended up absent (going through the editor IS the review).
-        if had_nb {
+        if had_ipso {
             view.mark_addressed();
         }
 
         // Stamp the SHA snapshot for this cell — it has been reviewed by going
-        // through the editor. Only stamp cells that have (or now have) nota-bene
+        // through the editor. Only stamp cells that have (or now have) ipso
         // metadata; plain passthrough cells stay clean.
-        if src_cell.nota_bene().is_some() {
+        if src_cell.ipso().is_some() {
             let shas_slice = snapshot[..=cell_idx].to_vec();
-            src_cell.nota_bene_mut().set_shas(shas_slice);
+            src_cell.ipso_mut().set_shas(shas_slice);
         }
     }
 
@@ -338,10 +338,10 @@ impl SectionBuilder {
 
     fn set_test(&mut self, cell: &Cell) {
         let src = cell.source_str();
-        // Strip %%nb_skip first line if present.
-        let src = if let Some(stripped) = src.strip_prefix("%%nb_skip\n") {
+        // Strip %%ipso_skip first line if present.
+        let src = if let Some(stripped) = src.strip_prefix("%%ipso_skip\n") {
             stripped.to_string()
-        } else if src == "%%nb_skip" {
+        } else if src == "%%ipso_skip" {
             String::new()
         } else {
             src
@@ -440,7 +440,7 @@ mod tests {
         CellId::new(s).unwrap()
     }
 
-    /// Plain code cell with no nota-bene metadata.
+    /// Plain code cell with no ipso metadata.
     fn code_cell(id: &str, source: &str) -> Cell {
         Cell::Code {
             id: cid(id),
@@ -451,10 +451,10 @@ mod tests {
         }
     }
 
-    /// Code cell that already has nota-bene metadata.
+    /// Code cell that already has ipso metadata.
     fn code_cell_with_nb(id: &str, source: &str, nb_val: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), nb_val);
+        meta.additional.insert("ipso".to_string(), nb_val);
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -464,11 +464,11 @@ mod tests {
         }
     }
 
-    /// Build a cell that carries an editor role in its nota-bene metadata.
+    /// Build a cell that carries an editor role in its ipso metadata.
     fn editor_cell(id: &str, source: &str, role: &str, target: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "editor": { "role": role, "cell_id": target } }),
         );
         Cell::Code {
@@ -484,7 +484,7 @@ mod tests {
     fn section_header(id: &str, target: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "editor": { "role": "section-header", "cell_id": target } }),
         );
         Cell::Markdown {
@@ -531,7 +531,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         let fix = fixtures.get("my_fix").expect("fixture not found");
         assert_eq!(fix.description, "My desc");
@@ -549,7 +549,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
         let (name, fix) = fixtures.iter().next().unwrap();
@@ -571,7 +571,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         let fix = fixtures.get("named_fix").unwrap();
         assert_eq!(fix.description, ""); // empty default
@@ -584,26 +584,26 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn test_cell_with_nb_skip_and_name() {
+    fn test_cell_with_ipso_skip_and_name() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
         let editor = simple_editor(
             "src",
             "x = 1",
-            Some("%%nb_skip\n# test: check_x\nassert x == 1"),
+            Some("%%ipso_skip\n# test: check_x\nassert x == 1"),
         );
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "check_x");
         assert_eq!(test.source, "assert x == 1");
     }
 
     #[test]
-    fn test_cell_bare_nb_skip_yields_no_test() {
-        // "%%nb_skip" alone → body is empty → has_test_content = false → test key absent.
+    fn test_cell_bare_ipso_skip_yields_no_test() {
+        // "%%ipso_skip" alone → body is empty → has_test_content = false → test key absent.
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         let src_cell = Cell::Code {
             id: cid("src"),
             metadata: meta,
@@ -612,10 +612,10 @@ mod tests {
             outputs: vec![],
         };
         let mut source = notebook(vec![src_cell]);
-        let editor = simple_editor("src", "x = 1", Some("%%nb_skip"));
+        let editor = simple_editor("src", "x = 1", Some("%%ipso_skip"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         // Blank test stub → test key absent.
         assert!(data.test.is_none());
     }
@@ -623,22 +623,22 @@ mod tests {
     #[test]
     fn test_cell_no_test_header_uses_unnamed() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
-        let editor = simple_editor("src", "x = 1", Some("%%nb_skip\nassert x == 1"));
+        let editor = simple_editor("src", "x = 1", Some("%%ipso_skip\nassert x == 1"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "<unnamed>");
         assert_eq!(test.source, "assert x == 1");
     }
 
     #[test]
-    fn test_cell_without_nb_skip_captures_whole_source_as_unnamed() {
+    fn test_cell_without_ipso_skip_captures_whole_source_as_unnamed() {
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
         let editor = simple_editor("src", "x = 1", Some("assert x == 1"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let test = data.test.as_ref().unwrap();
         assert_eq!(test.name, "<unnamed>");
         assert_eq!(test.source, "assert x == 1");
@@ -654,19 +654,19 @@ mod tests {
         let editor = simple_editor("src", "x = 99\n", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         assert!(data.diff.is_some());
     }
 
     #[test]
     fn diff_absent_stays_absent_when_no_change_and_no_prior_meta() {
-        // Source cell has no nota-bene; editor makes no change → no diff key created.
+        // Source cell has no ipso; editor makes no change → no diff key created.
         let mut source = notebook(vec![code_cell("src", "x = 1")]);
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // Cell had no nota-bene and nothing was written → stays absent.
-        assert!(source.cells[0].nota_bene().is_none());
+        // Cell had no ipso and nothing was written → stays absent.
+        assert!(source.cells[0].ipso().is_none());
     }
 
     #[test]
@@ -679,7 +679,7 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         // Previously had a diff; now same source → diff key absent.
         assert!(data.diff.is_none());
     }
@@ -694,8 +694,8 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // No nota-bene at all (prev was absent and nothing was written).
-        assert!(source.cells[0].nota_bene().is_none());
+        // No ipso at all (prev was absent and nothing was written).
+        assert!(source.cells[0].ipso().is_none());
     }
 
     #[test]
@@ -708,7 +708,7 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         // Had fixtures → now no fixture cells → fixtures key absent.
         assert!(data.fixtures.is_none());
     }
@@ -724,17 +724,17 @@ mod tests {
             "x = 1",
             json!({ "test": { "name": "old_test", "source": "assert True" } }),
         )]);
-        // Editor has a test cell that is just %%nb_skip (empty body).
-        let editor = simple_editor("src", "x = 1", Some("%%nb_skip"));
+        // Editor has a test cell that is just %%ipso_skip (empty body).
+        let editor = simple_editor("src", "x = 1", Some("%%ipso_skip"));
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         // Test cell present but blank → test key absent.
         assert!(data.test.is_none());
     }
 
     // -------------------------------------------------------------------------
-    // Nota-bene key preservation
+    // Ipso key preservation
     // -------------------------------------------------------------------------
 
     #[test]
@@ -743,8 +743,8 @@ mod tests {
         let editor = simple_editor("src", "x = 1", None);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // Prior nota-bene was Some → nb key must still exist.
-        assert!(source.cells[0].nota_bene().is_some());
+        // Prior ipso was Some → nb key must still exist.
+        assert!(source.cells[0].ipso().is_some());
     }
 
     // -------------------------------------------------------------------------
@@ -757,7 +757,7 @@ mod tests {
         let editor = simple_editor("ghost-cell", "x = 1", None);
         // Should not return an error; source cell stays untouched.
         apply_editor_to_source(&mut source, &editor).unwrap();
-        assert!(source.cells[0].nota_bene().is_none());
+        assert!(source.cells[0].ipso().is_none());
     }
 
     // -------------------------------------------------------------------------
@@ -776,9 +776,9 @@ mod tests {
         apply_editor_to_source(&mut source, &editor).unwrap();
 
         // c1 should have a diff; c2 should not (and stays absent).
-        let data1 = source.cells[0].nota_bene().unwrap();
+        let data1 = source.cells[0].ipso().unwrap();
         assert!(data1.diff.is_some());
-        assert!(source.cells[1].nota_bene().is_none());
+        assert!(source.cells[1].ipso().is_none());
     }
 
     // -------------------------------------------------------------------------
@@ -798,7 +798,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
     }
@@ -816,20 +816,20 @@ mod tests {
             editor_cell("ps", "x = 1", "patched-source", "src"),
             editor_cell(
                 "t1",
-                "%%nb_skip\n# test: first_test\nassert x == 1",
+                "%%ipso_skip\n# test: first_test\nassert x == 1",
                 "test",
                 "src",
             ),
             editor_cell(
                 "t2",
-                "%%nb_skip\n# test: second_test\nassert x == 2",
+                "%%ipso_skip\n# test: second_test\nassert x == 2",
                 "test",
                 "src",
             ),
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let test = data.test.as_ref().unwrap();
         assert_eq!(
             test.name, "second_test",
@@ -861,9 +861,9 @@ mod tests {
         apply_editor_to_source(&mut source, &editor).unwrap();
 
         // The markdown cell must not have been treated as a fixture.
-        // The source cell had no prior nota-bene and nothing was written, so it stays absent.
+        // The source cell had no prior ipso and nothing was written, so it stays absent.
         assert!(
-            source.cells[0].nota_bene().is_none(),
+            source.cells[0].ipso().is_none(),
             "markdown cell was incorrectly treated as a fixture (cell should remain absent)"
         );
     }
@@ -888,7 +888,7 @@ mod tests {
 
         // No test should have been parsed from the markdown cell.
         assert!(
-            source.cells[0].nota_bene().is_none(),
+            source.cells[0].ipso().is_none(),
             "markdown cell was incorrectly treated as a test (cell should remain absent)"
         );
     }
@@ -910,10 +910,10 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        // Source cell had no prior nota-bene and the only fixture was blank →
-        // nothing written, cell stays without nota-bene.
+        // Source cell had no prior ipso and the only fixture was blank →
+        // nothing written, cell stays without ipso.
         assert!(
-            source.cells[0].nota_bene().is_none(),
+            source.cells[0].ipso().is_none(),
             "expected cell to remain absent when only blank-body fixtures are present"
         );
     }
@@ -930,7 +930,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        assert!(source.cells[0].nota_bene().is_none());
+        assert!(source.cells[0].ipso().is_none());
     }
 
     /// A `# fixture:` line with only whitespace after the colon but a real body
@@ -946,7 +946,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1);
         let (name, fix) = fixtures.iter().next().unwrap();
@@ -970,11 +970,11 @@ mod tests {
             section_header("hdr", "src"),
             editor_cell("fix", stub_src, "fixture", "src"),
             editor_cell("ps", "x = 1", "patched-source", "src"),
-            editor_cell("tst", "%%nb_skip\n# test: <unnamed>", "test", "src"),
+            editor_cell("tst", "%%ipso_skip\n# test: <unnamed>", "test", "src"),
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         assert!(
             data.fixtures.is_none(),
             "blank stub fixture should produce absent fixtures key"
@@ -989,11 +989,11 @@ mod tests {
         let editor = notebook(vec![
             section_header("hdr", "src"),
             editor_cell("ps", "x = 1", "patched-source", "src"),
-            editor_cell("tst", "%%nb_skip\n# test: <unnamed>", "test", "src"),
+            editor_cell("tst", "%%ipso_skip\n# test: <unnamed>", "test", "src"),
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         assert!(
             data.test.is_none(),
             "blank stub test should produce absent test key"
@@ -1009,14 +1009,14 @@ mod tests {
             editor_cell("ps", "x = 1", "patched-source", "src"),
             editor_cell(
                 "tst",
-                "%%nb_skip\n# test: my_test\n   \n\t\n",
+                "%%ipso_skip\n# test: my_test\n   \n\t\n",
                 "test",
                 "src",
             ),
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         assert!(
             data.test.is_none(),
             "whitespace-only test body should produce absent test key"
@@ -1043,7 +1043,7 @@ mod tests {
         ]);
         apply_editor_to_source(&mut source, &editor).unwrap();
 
-        let data = source.cells[0].nota_bene().unwrap();
+        let data = source.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.as_ref().unwrap();
         assert_eq!(fixtures.len(), 1, "only the real fixture should be kept");
         assert!(

@@ -1,15 +1,15 @@
 ---
 name: OpenCode E2E functional tests
-overview: "Add a Makefile and sample-project for local OpenCode E2E testing: build the nota-bene CLI, set up a project with opencode.json pointing at the local MCP server, and a script that runs opencode in non-interactive mode and validates the MCP tool was invoked via JSON output."
+overview: "Add a Makefile and sample-project for local OpenCode E2E testing: build the ipso CLI, set up a project with opencode.json pointing at the local MCP server, and a script that runs opencode in non-interactive mode and validates the MCP tool was invoked via JSON output."
 todos: []
 isProject: false
 ---
 
-# OpenCode E2E functional tests for nota-bene
+# OpenCode E2E functional tests for ipso
 
 ## Context
 
-- **CLI/MCP**: Single binary `nota-bene`; `nota-bene mcp` runs the MCP server on stdio. Tool: `greet(name: string)` → `"Hello, {name}"` ([src/mcp.rs](src/mcp.rs)).
+- **CLI/MCP**: Single binary `ipso`; `ipso mcp` runs the MCP server on stdio. Tool: `greet(name: string)` → `"Hello, {name}"` ([src/mcp.rs](src/mcp.rs)).
 - **OpenCode**: Uses [opencode.json](https://opencode.ai/docs/mcp-servers/) with `mcp.<name>.type: "local"` and `command: [path, "mcp"]`. Non-interactive run: `opencode run "prompt"`; `--format json` emits JSONL with a `tool_use` event containing tool name, input, and output.
 
 ## 1. Add `sample-project` to .gitignore
@@ -22,16 +22,16 @@ Create a **Makefile** at repo root with:
 
 - **`make build`**  
   - Run `cargo build` (debug).  
-  - Artifact: `target/debug/nota-bene`.
+  - Artifact: `target/debug/ipso`.
 - **`make clean`**  
   - Remove `target/` and `sample-project/` (e.g. `rm -rf target sample-project`). Restores repo to pre-setup state.
 - **`make setup-sample-project`** (depends on build)
   - Create directory `sample-project/`.
-  - Symlink: `sample-project/nota-bene` → `../target/debug/nota-bene` (relative from repo root so the link is portable).
+  - Symlink: `sample-project/ipso` → `../target/debug/ipso` (relative from repo root so the link is portable).
   - Write `sample-project/opencode.json` with OpenCode MCP config:
     - Schema: `https://opencode.ai/config.json`.
-    - `mcp.nota-bene`: `type: "local"`, `command: ["./nota-bene", "mcp"]`, `enabled: true`.
-  - OpenCode resolves config from CWD, so when we `cd sample-project` and run `opencode run ...`, it will use this config and start the MCP server via `./nota-bene mcp`.
+    - `mcp.ipso`: `type: "local"`, `command: ["./ipso", "mcp"]`, `enabled: true`.
+  - OpenCode resolves config from CWD, so when we `cd sample-project` and run `opencode run ...`, it will use this config and start the MCP server via `./ipso mcp`.
 - **`make e2e-opencode`** (depends on setup-sample-project)
   - Invoke `./scripts/opencode-e2e.sh` from repo root. Prereqs (build, sample-project) are guaranteed by make dependencies; the script does not check them.
 
@@ -78,5 +78,5 @@ When implementing, copy this planning document to **specs/** in the repo (e.g. `
 
 ## Notes
 
-- The prompt instructs OpenCode to "use the **greet** tool with the name sunshine". The nota-bene MCP server exposes the `greet(name)` tool; the LLM should call `greet` with `name: "sunshine"` and get "Hello, sunshine". No changes to the Rust MCP code are required.
+- The prompt instructs OpenCode to "use the **greet** tool with the name sunshine". The ipso MCP server exposes the `greet(name)` tool; the LLM should call `greet` with `name: "sunshine"` and get "Hello, sunshine". No changes to the Rust MCP code are required.
 - If OpenCode is not installed, `opencode run` will fail with the shell's usual "command not found"; no extra checks needed in the script.

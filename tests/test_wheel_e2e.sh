@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# End-to-end test: install a nota-bene wheel into a fresh venv and verify
+# End-to-end test: install a ipso wheel into a fresh venv and verify
 # that both the CLI binary and Python library are usable.
 #
 # Usage:
-#   bash tests/test_wheel_e2e.sh path/to/nota_bene-*.whl
+#   bash tests/test_wheel_e2e.sh path/to/ipso-*.whl
 #
 # If no wheel path is given, the script builds one using maturin first.
 
@@ -24,9 +24,9 @@ if [ $# -ge 1 ]; then
     WHEEL="$1"
 else
     echo "==> No wheel provided, building with maturin..."
-    cd "$REPO_ROOT/nota-bene"
+    cd "$REPO_ROOT/ipso"
     uvx maturin build --release -o "$REPO_ROOT/target/wheels/"
-    WHEEL="$(ls "$REPO_ROOT/target/wheels/"nota_bene-*.whl | head -1)"
+    WHEEL="$(ls "$REPO_ROOT/target/wheels/"ipso-*.whl | head -1)"
     cd "$REPO_ROOT"
 fi
 
@@ -43,16 +43,16 @@ pip install --quiet "$WHEEL"
 
 # --- Verify CLI binary -------------------------------------------------------
 
-echo "==> Checking nota-bene binary is on PATH"
-BINARY="$(which nota-bene)"
+echo "==> Checking ipso binary is on PATH"
+BINARY="$(which ipso)"
 echo "    Found: $BINARY"
 
-echo "==> Running nota-bene --help"
-nota-bene --help
+echo "==> Running ipso --help"
+ipso --help
 
 echo "==> Verifying --help output contains expected text"
-HELP_OUTPUT="$(nota-bene --help 2>&1)"
-if echo "$HELP_OUTPUT" | grep -qi "usage\|notebook\|nota"; then
+HELP_OUTPUT="$(ipso --help 2>&1)"
+if echo "$HELP_OUTPUT" | grep -qi "usage\|notebook\|ipso"; then
     echo "    OK: help output looks correct"
 else
     echo "    FAIL: unexpected --help output"
@@ -62,8 +62,8 @@ fi
 
 # --- Verify Python library ---------------------------------------------------
 
-echo "==> Checking nota_bene Python package is importable"
-python -c "import nota_bene; print(f'nota_bene version: {nota_bene.__version__}')"
+echo "==> Checking ipso Python package is importable"
+python -c "import ipso; print(f'ipso version: {ipso.__version__}')"
 
 # --- Done --------------------------------------------------------------------
 

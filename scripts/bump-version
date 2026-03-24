@@ -8,19 +8,19 @@
 #   scripts/bump-version <package> <version>
 #
 # Arguments:
-#   package   One of: nota-bene, pytest-nota-bene, all
+#   package   One of: ipso, pytest-ipso, all
 #   version   Semantic version without "v" prefix (e.g. 0.2.0)
 #
 # Examples:
 #   scripts/bump-version all 0.2.0
-#   scripts/bump-version nota-bene 0.2.0
-#   scripts/bump-version pytest-nota-bene 0.3.0
+#   scripts/bump-version ipso 0.2.0
+#   scripts/bump-version pytest-ipso 0.3.0
 
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
     echo "Usage: scripts/bump-version <package> <version>"
-    echo "  package: nota-bene | pytest-nota-bene | all"
+    echo "  package: ipso | pytest-ipso | all"
     echo "  version: e.g. 0.2.0"
     exit 1
 fi
@@ -37,9 +37,9 @@ if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 case "$package" in
-    nota-bene|pytest-nota-bene|all) ;;
+    ipso|pytest-ipso|all) ;;
     *)
-        echo "Error: unknown package '$package'. Use: nota-bene | pytest-nota-bene | all"
+        echo "Error: unknown package '$package'. Use: ipso | pytest-ipso | all"
         exit 1
         ;;
 esac
@@ -54,22 +54,22 @@ fi
 
 # --- Version bump functions ---
 
-bump_nota_bene() {
-    echo "Bumping nota-bene to $version"
+bump_ipso() {
+    echo "Bumping ipso to $version"
     sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/Cargo.toml"
-    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/nota-bene/pyproject.toml"
-    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/nota-bene/src/nota_bene/__about__.py"
+    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/ipso/pyproject.toml"
+    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/ipso/src/ipso/__about__.py"
     echo "  Updated Cargo.toml"
-    echo "  Updated nota-bene/pyproject.toml"
-    echo "  Updated nota-bene/src/nota_bene/__about__.py"
+    echo "  Updated ipso/pyproject.toml"
+    echo "  Updated ipso/src/ipso/__about__.py"
 }
 
-bump_pytest_nota_bene() {
-    echo "Bumping pytest-nota-bene to $version"
-    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/pytest-nota-bene/pyproject.toml"
-    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/pytest-nota-bene/src/pytest_nota_bene/__about__.py"
-    echo "  Updated pytest-nota-bene/pyproject.toml"
-    echo "  Updated pytest-nota-bene/src/pytest_nota_bene/__about__.py"
+bump_pytest_ipso() {
+    echo "Bumping pytest-ipso to $version"
+    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/pytest-ipso/pyproject.toml"
+    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/pytest-ipso/src/pytest_ipso/__about__.py"
+    echo "  Updated pytest-ipso/pyproject.toml"
+    echo "  Updated pytest-ipso/src/pytest_ipso/__about__.py"
 }
 
 # --- Determine branch name ---
@@ -86,9 +86,9 @@ echo "==> Creating branch: $branch_name"
 git checkout -b "$branch_name" || exit 1
 
 case "$package" in
-    nota-bene)       bump_nota_bene ;;
-    pytest-nota-bene) bump_pytest_nota_bene ;;
-    all)             bump_nota_bene; bump_pytest_nota_bene ;;
+    ipso)       bump_ipso ;;
+    pytest-ipso) bump_pytest_ipso ;;
+    all)             bump_ipso; bump_pytest_ipso ;;
 esac
 
 echo ""

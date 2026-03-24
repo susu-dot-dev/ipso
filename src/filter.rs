@@ -96,13 +96,13 @@ impl FilterKey {
             FilterKey::Index => match_index(index, value),
 
             FilterKey::Test => {
-                let has_test = cell.nota_bene().and_then(|d| d.test).is_some();
+                let has_test = cell.ipso().and_then(|d| d.test).is_some();
                 match_null_or_not(has_test, value)
             }
 
             FilterKey::Fixtures => {
                 let has_fixtures = cell
-                    .nota_bene()
+                    .ipso()
                     .and_then(|d| d.fixtures)
                     .map(|f| !f.is_empty())
                     .unwrap_or(false);
@@ -110,7 +110,7 @@ impl FilterKey {
             }
 
             FilterKey::Diff => {
-                let has_diff = cell.nota_bene().and_then(|d| d.diff).is_some();
+                let has_diff = cell.ipso().and_then(|d| d.diff).is_some();
                 match_null_or_not(has_diff, value)
             }
 
@@ -210,7 +210,7 @@ mod tests {
 
     fn cell_with_nb(id: &str, source: &str, nb_val: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), nb_val);
+        meta.additional.insert("ipso".to_string(), nb_val);
         Cell::Code {
             id: cid(id),
             metadata: meta,

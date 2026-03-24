@@ -12,13 +12,13 @@ Fixture metadata `source` is executed **as-is** in the test kernel (one generate
 
 ## 2. Test editor: markdown guide cells
 
-The `nota-bene edit` notebook inserts markdown cells with `nota-bene.editor.role == "guide"` between:
+The `ipso edit` notebook inserts markdown cells with `ipso.editor.role == "guide"` between:
 
 - Section header and fixture block  
 - Fixture block and patched source  
 - Patched source and test cell  
 
-Sections without nota-bene metadata get a guide before the passthrough source cell.
+Sections without ipso metadata get a guide before the passthrough source cell.
 
 On `edit --continue`, the section parser **skips** `guide` cells (no warning). User-added markdown without this role still triggers the existing “non-code cell … ignored” warning.
 

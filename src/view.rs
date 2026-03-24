@@ -43,7 +43,7 @@ impl CellView {
     /// `compute_cell_diagnostics` can compare SHAs against the full notebook.
     pub fn from_cell(nb: &Notebook, index: usize) -> Self {
         let cell = &nb.cells[index];
-        let nb_data = cell.nota_bene().unwrap_or_default();
+        let nb_data = cell.ipso().unwrap_or_default();
         let status = compute_cell_diagnostics(nb, index);
 
         CellView {
@@ -110,7 +110,7 @@ mod tests {
 
     fn cell_with_nb(id: &str, source: &str, nb_val: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), nb_val);
+        meta.additional.insert("ipso".to_string(), nb_val);
         Cell::Code {
             id: cid(id),
             metadata: meta,

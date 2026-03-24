@@ -692,6 +692,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipso"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "canonical_json",
+ "clap",
+ "diffy",
+ "indexmap",
+ "jsonc-parser",
+ "lru",
+ "nbformat",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "tokio",
+ "tower-lsp",
+ "uuid",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,28 +836,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "uuid",
-]
-
-[[package]]
-name = "nota-bene"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "canonical_json",
- "clap",
- "diffy",
- "indexmap",
- "jsonc-parser",
- "lru",
- "nbformat",
- "rmcp",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
- "tokio",
- "tower-lsp",
  "uuid",
 ]
 

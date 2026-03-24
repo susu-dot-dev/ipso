@@ -1,5 +1,5 @@
 [package]
-name = "nota-bene"
+name = "ipso"
 version = "0.1.0"
 edition = "2021"
 description = "Notebook testing with fixtures, patches, and AI-generated tests"

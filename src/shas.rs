@@ -3,19 +3,19 @@ use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 
-use crate::metadata::{NotaBeneData, ShaEntry};
+use crate::metadata::{IpsoData, ShaEntry};
 use crate::notebook::CellExt;
 
 // ---------------------------------------------------------------------------
 // compute_cell_sha
 // ---------------------------------------------------------------------------
 
-/// SHA1 of `{"nota-bene": <metadata without "shas">, "source": "..."}`.
+/// SHA1 of `{"ipso": <metadata without "shas">, "source": "..."}`.
 /// `shas` is excluded to avoid a circular dependency.
 pub fn compute_cell_sha(cell: &Cell) -> String {
     let source = cell.source_str();
 
-    let nota_bene_val: Value = match cell.additional().get("nota-bene") {
+    let ipso_val: Value = match cell.additional().get("ipso") {
         Some(Value::Object(map)) => {
             let filtered: serde_json::Map<String, Value> = map
                 .iter()
@@ -28,7 +28,7 @@ pub fn compute_cell_sha(cell: &Cell) -> String {
     };
 
     let val = serde_json::json!({
-        "nota-bene": nota_bene_val,
+        "ipso": ipso_val,
         "source": source,
     });
 
@@ -68,7 +68,7 @@ pub struct CellStateResult {
 pub enum CellState {
     /// SHAs match; everything checks out.
     Valid,
-    /// Code cell with no nota-bene setup, or nota-bene present but no shas recorded yet.
+    /// Code cell with no ipso setup, or ipso present but no shas recorded yet.
     Missing,
     /// SHAs exist but something has changed since last accept.
     Changed(CellStateResult),
@@ -76,18 +76,18 @@ pub enum CellState {
 
 /// Compute the cell state for a single cell at position `cell_index` in `nb`.
 ///
-/// - Code cells with no `nota-bene` metadata return `Missing` (bug fix: they
+/// - Code cells with no `ipso` metadata return `Missing` (bug fix: they
 ///   must not be silently ignored — the AI needs to set them up).
-/// - Cells with `nota-bene` but no `shas` return `Missing`.
+/// - Cells with `ipso` but no `shas` return `Missing`.
 /// - Cells whose SHAs have drifted return `Changed` with reasons split into
 ///   `needs_review` (own content changed) and `ancestor_modified` (preceding
 ///   cell changes).
 pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
     let cell = &nb.cells[cell_index];
 
-    let data: NotaBeneData = match cell.nota_bene() {
+    let data: IpsoData = match cell.ipso() {
         None => {
-            // Code cells with no nota-bene metadata have never been configured.
+            // Code cells with no ipso metadata have never been configured.
             if matches!(cell, Cell::Code { .. }) {
                 return CellState::Missing;
             }
@@ -190,9 +190,9 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
 
 /// Store the SHA snapshot for a cell.
 ///
-/// - If the cell already has `nota-bene` metadata, shas are updated in place.
-/// - If the cell is a plain code cell with no `nota-bene` metadata, a minimal
-///   `nota-bene` structure is created (empty fixtures/diff/test) so the cell
+/// - If the cell already has `ipso` metadata, shas are updated in place.
+/// - If the cell is a plain code cell with no `ipso` metadata, a minimal
+///   `ipso` structure is created (empty fixtures/diff/test) so the cell
 ///   is acknowledged and becomes Valid after acceptance.
 /// - Non-code cells (Markdown, Raw) are skipped.
 pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
@@ -201,10 +201,10 @@ pub fn accept_cell(nb: &mut Notebook, cell_index: usize) {
     if !matches!(cell, Cell::Code { .. }) {
         return;
     }
-    // Ensure nota-bene key exists (creates it for plain code cells).
-    cell.nota_bene_mut().mark_addressed();
+    // Ensure ipso key exists (creates it for plain code cells).
+    cell.ipso_mut().mark_addressed();
     let shas_slice = snapshot[..=cell_index].to_vec();
-    cell.nota_bene_mut().set_shas(shas_slice);
+    cell.ipso_mut().set_shas(shas_slice);
 }
 
 #[cfg(test)]
@@ -231,7 +231,7 @@ mod tests {
     fn cell_with_shas(id: &str, source: &str, shas: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "shas": shas }));
+            .insert("ipso".to_string(), json!({ "shas": shas }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -243,7 +243,7 @@ mod tests {
 
     fn cell_with_nb_no_shas(id: &str, source: &str) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn markdown_cell_no_meta_returns_valid() {
-        // Markdown cells are not under nota-bene management; they must never
+        // Markdown cells are not under ipso management; they must never
         // produce a Missing state, regardless of whether they have metadata.
         let nb = notebook(vec![markdown_cell("m1", "# Hello")]);
         assert_eq!(cell_state(&nb, 0), CellState::Valid);
@@ -495,7 +495,7 @@ mod tests {
     fn cell_with_fixture(id: &str, source: &str, fixture_val: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "fixtures": { "input": fixture_val } }),
         );
         Cell::Code {
@@ -510,7 +510,7 @@ mod tests {
     fn cell_with_diff(id: &str, source: &str, diff_val: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "diff": diff_val }));
+            .insert("ipso".to_string(), json!({ "diff": diff_val }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -522,10 +522,8 @@ mod tests {
 
     fn cell_with_test(id: &str, source: &str, test_val: &str) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({ "test": { "code": test_val } }),
-        );
+        meta.additional
+            .insert("ipso".to_string(), json!({ "test": { "code": test_val } }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -538,7 +536,7 @@ mod tests {
     fn cell_with_shas_only(id: &str, source: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "shas": [{"cell_id": id, "sha": "deadbeef"}] }),
         );
         Cell::Code {
@@ -588,7 +586,7 @@ mod tests {
         let c1 = cell_with_shas_only("c1", "x = 1");
         let mut meta = blank_cell_metadata();
         meta.additional.insert(
-            "nota-bene".to_string(),
+            "ipso".to_string(),
             json!({ "shas": [{"cell_id": "c1", "sha": "different_sha_value"}] }),
         );
         let c2 = Cell::Code {
@@ -606,13 +604,13 @@ mod tests {
     }
 
     #[test]
-    fn sha_plain_cell_uses_empty_nota_bene_object() {
+    fn sha_plain_cell_uses_empty_ipso_object() {
         let plain = plain_cell("c1", "x = 1");
         let with_empty_nb = cell_with_nb_no_shas("c1", "x = 1");
         assert_eq!(
             compute_cell_sha(&plain),
             compute_cell_sha(&with_empty_nb),
-            "Plain cell and cell with empty nota-bene must hash identically"
+            "Plain cell and cell with empty ipso must hash identically"
         );
     }
 
@@ -624,7 +622,7 @@ mod tests {
         let c2 = cell_with_nb_no_shas("c2", "y = 2");
         let mut nb = notebook(vec![c1, c2]);
         accept_cell(&mut nb, 1);
-        let data = nb.cells[1].nota_bene().expect("c2 should have nota-bene");
+        let data = nb.cells[1].ipso().expect("c2 should have ipso");
         let shas = data.shas.expect("shas should be set");
         assert_eq!(shas.len(), 2);
         assert_eq!(shas[1].cell_id, "c2");
@@ -635,9 +633,7 @@ mod tests {
         let c1 = plain_cell("c1", "x = 1");
         let mut nb = notebook(vec![c1]);
         accept_cell(&mut nb, 0);
-        let data = nb.cells[0]
-            .nota_bene()
-            .expect("nota-bene should exist after accept");
+        let data = nb.cells[0].ipso().expect("ipso should exist after accept");
         let shas = data.shas.expect("shas should be set");
         assert_eq!(shas.len(), 1);
         assert_eq!(shas[0].cell_id, "c1");
@@ -650,12 +646,12 @@ mod tests {
         let c2 = cell_with_nb_no_shas("c2", "y = 2");
         let mut nb = notebook(vec![c1, c2]);
         accept_cell(&mut nb, 1);
-        let shas_before = nb.cells[1].nota_bene().unwrap().shas.unwrap();
+        let shas_before = nb.cells[1].ipso().unwrap().shas.unwrap();
 
         // Modify c1's source, then re-accept c2 — shas should change
         nb.cells[0] = plain_cell("c1", "x = 999");
         accept_cell(&mut nb, 1);
-        let shas_after = nb.cells[1].nota_bene().unwrap().shas.unwrap();
+        let shas_after = nb.cells[1].ipso().unwrap().shas.unwrap();
 
         assert_ne!(
             shas_before[0].sha, shas_after[0].sha,

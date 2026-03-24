@@ -2,7 +2,7 @@
 
 ## Overview
 
-Each cell can have one test. The test is plain Python source code that calls `nota_bene.execute_cell()` to run the cell and uses `assert` statements to validate behavior. Fixtures establish the environment before the test runs — the test code itself focuses purely on execution and assertion.
+Each cell can have one test. The test is plain Python source code that calls `ipso.execute_cell()` to run the cell and uses `assert` statements to validate behavior. Fixtures establish the environment before the test runs — the test code itself focuses purely on execution and assertion.
 
 Before the cell source runs, the runner applies the cell's diff (if present) to patch the source — replacing hardcoded values like file paths with fixture-provided variables. The test code always executes the patched version.
 
@@ -17,7 +17,7 @@ A developer has a 3-cell pandas notebook. The AI has generated fixtures and test
 The test calls `execute_cell()` once and asserts on the result:
 
 ```python
-nota_bene.execute_cell()
+ipso.execute_cell()
 assert isinstance(df, pd.DataFrame), "expected df to be a DataFrame"
 assert len(df) > 0, f"expected rows, got {len(df)}"
 ```
@@ -45,9 +45,9 @@ for case in test_cases:
     df["price"] = [case["price"]] * len(df)
     df["quantity"] = [case["quantity"]] * len(df)
 
-    nota_bene.execute_cell()
+    ipso.execute_cell()
 
-    with nota_bene.subtest(f"price={case['price']} quantity={case['quantity']}"):
+    with ipso.subtest(f"price={case['price']} quantity={case['quantity']}"):
         assert (df["total"] == case["expected_total"]).all(), (
             f"expected total {case['expected_total']}, got {df['total'].iloc[0]}"
         )
@@ -63,17 +63,17 @@ my_notebook.ipynb::validates price calculation::price=99.9 quantity=1 PASSED
 
 ## Metadata Schema
 
-A test is stored in a cell's `nota-bene` metadata under the `test` key, alongside `fixtures` and `diff`:
+A test is stored in a cell's `ipso` metadata under the `test` key, alongside `fixtures` and `diff`:
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "fixtures": { ... },
     "diff": "...",
     "test": {
       "name": "validates price calculation",
       "source": [
-        "nota_bene.execute_cell()\n",
+        "ipso.execute_cell()\n",
         "assert isinstance(df, pd.DataFrame)\n"
       ]
     }
@@ -94,7 +94,7 @@ The diff is stored as a standard unified diff string:
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "diff": "--- a/cell\n+++ b/cell\n@@ -1,4 +1,4 @@\n import pandas as pd\n \n-df = pd.read_csv('huge_file.csv')\n+df = pd.read_csv(csv_name)\n df.head()\n"
   }
 }
@@ -121,14 +121,14 @@ Not all cells need a diff. If the cell source does not require modification to r
 Call `execute_cell()` once, assert on results. Use descriptive assert messages so failures are self-explanatory:
 
 ```python
-nota_bene.execute_cell()
+ipso.execute_cell()
 assert "total" in df.columns, "expected 'total' column to be added"
 assert (df["total"] == df["price"] * df["quantity"]).all(), "total column values are incorrect"
 ```
 
 ### Data-driven pattern
 
-Loop over test cases, reset state between calls, wrap each case in `nota_bene.subtest()`:
+Loop over test cases, reset state between calls, wrap each case in `ipso.subtest()`:
 
 ```python
 import copy
@@ -138,41 +138,41 @@ for case in test_cases:
     df = copy.deepcopy(df_snapshot)  # restore state before each run
     df["price"] = [case["price"]] * len(df)
 
-    nota_bene.execute_cell()
+    ipso.execute_cell()
 
-    with nota_bene.subtest(f"price={case['price']}"):
+    with ipso.subtest(f"price={case['price']}"):
         assert (df["total"] == case["expected"]).all(), (
             f"expected {case['expected']}, got {df['total'].iloc[0]}"
         )
 ```
 
-`nota_bene.subtest()` is a context manager. If an assertion inside it raises, the exception is caught and recorded as a failure for that subtest — execution continues with the next case. One failing subtest does not stop the others from running.
+`ipso.subtest()` is a context manager. If an assertion inside it raises, the exception is caught and recorded as a failure for that subtest — execution continues with the next case. One failing subtest does not stop the others from running.
 
 ### Implicit subtest
 
-If the test code never calls `nota_bene.subtest()`, the runner wraps the entire test in a single implicit subtest using the test `name`. The result structure is identical either way — a list with one entry instead of many.
+If the test code never calls `ipso.subtest()`, the runner wraps the entire test in a single implicit subtest using the test `name`. The result structure is identical either way — a list with one entry instead of many.
 
-## `nota_bene` API
+## `ipso` API
 
 ### Properties _(read-only state)_
 
-- **`nota_bene.test_results`** is not part of the public API. Test authors do not need to read it — results are accumulated internally by `subtest()` and retrieved by the runner via `nota_bene._runner.get_test_results()`.
+- **`ipso.test_results`** is not part of the public API. Test authors do not need to read it — results are accumulated internally by `subtest()` and retrieved by the runner via `ipso._runner.get_test_results()`.
 
 ### Methods _(actions)_
 
-- **`nota_bene.execute_cell()`**: Runs the patched cell source in the kernel's global namespace. Raises if the cell raises. Can be called multiple times within a test — each call re-executes the cell.
-- **`nota_bene.register_teardown(callback)`**: Registers a cleanup callback onto the teardown stack. Called from fixture source, not typically from test code.
-- **`nota_bene.subtest(name)`**: Context manager. Records a named subtest result. Catches exceptions and marks the subtest as failed without halting the rest of the test.
+- **`ipso.execute_cell()`**: Runs the patched cell source in the kernel's global namespace. Raises if the cell raises. Can be called multiple times within a test — each call re-executes the cell.
+- **`ipso.register_teardown(callback)`**: Registers a cleanup callback onto the teardown stack. Called from fixture source, not typically from test code.
+- **`ipso.subtest(name)`**: Context manager. Records a named subtest result. Catches exceptions and marks the subtest as failed without halting the rest of the test.
 
 ### Runner-facing _(called by the runner, not test code)_
 
-- **`nota_bene._runner.load_cell(source)`**: Injects the already-patched cell source string into the kernel so `execute_cell()` knows what to run.
-- **`nota_bene._runner.get_test_results()`**: Returns accumulated subtest results as a JSON string. Called by the runner after the test source finishes.
-- **`nota_bene._runner.run_teardowns()`**: Drains the teardown stack in LIFO order. Called by the runner after the test completes.
+- **`ipso._runner.load_cell(source)`**: Injects the already-patched cell source string into the kernel so `execute_cell()` knows what to run.
+- **`ipso._runner.get_test_results()`**: Returns accumulated subtest results as a JSON string. Called by the runner after the test source finishes.
+- **`ipso._runner.run_teardowns()`**: Drains the teardown stack in LIFO order. Called by the runner after the test completes.
 
 ## Results Format
 
-After the test source finishes executing, the runner calls `nota_bene._runner.get_test_results()` which returns a JSON string. Deserialized, it is a list of dicts, one per subtest:
+After the test source finishes executing, the runner calls `ipso._runner.get_test_results()` which returns a JSON string. Deserialized, it is a list of dicts, one per subtest:
 
 ```python
 [
@@ -195,11 +195,11 @@ The traceback is the kernel-side traceback — the actual source line that faile
 
 ## Formal Specification
 
-### `nota-bene.test` schema
+### `ipso.test` schema
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "test": {
       "name": "<string>",
       "source": ["<line1>\n", "<line2>\n"]
@@ -208,11 +208,11 @@ The traceback is the kernel-side traceback — the actual source line that faile
 }
 ```
 
-### `nota-bene.diff` schema
+### `ipso.diff` schema
 
 ```json
 {
-  "nota-bene": {
+  "ipso": {
     "diff": "<unified diff string>"
   }
 }

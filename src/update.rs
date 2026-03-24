@@ -261,14 +261,11 @@ pub fn apply_updates(updates: Vec<CellUpdate>, nb: &mut Notebook) -> Result<()> 
         match update.fixtures {
             UpdateField::Absent => {}
             UpdateField::Null => {
-                cell.nota_bene_mut().set_fixtures(None);
+                cell.ipso_mut().set_fixtures(None);
             }
             UpdateField::Value(fixtures_val) => {
                 // Merge semantics: read existing, merge, write back
-                let existing = cell
-                    .nota_bene()
-                    .and_then(|d| d.fixtures)
-                    .unwrap_or_default();
+                let existing = cell.ipso().and_then(|d| d.fixtures).unwrap_or_default();
                 let mut merged = existing;
 
                 let update_map = fixtures_val.as_object().expect("validated as object");
@@ -283,14 +280,14 @@ pub fn apply_updates(updates: Vec<CellUpdate>, nb: &mut Notebook) -> Result<()> 
                 }
 
                 if merged.is_empty() {
-                    cell.nota_bene_mut().set_fixtures(None);
+                    cell.ipso_mut().set_fixtures(None);
                 } else {
-                    cell.nota_bene_mut().set_fixtures(Some(merged));
+                    cell.ipso_mut().set_fixtures(Some(merged));
                 }
             }
         }
 
-        let mut view = cell.nota_bene_mut();
+        let mut view = cell.ipso_mut();
 
         // Apply test
         match update.test {
@@ -317,7 +314,7 @@ pub fn apply_updates(updates: Vec<CellUpdate>, nb: &mut Notebook) -> Result<()> 
             }
         }
 
-        // Ensure nota-bene key exists
+        // Ensure ipso key exists
         view.mark_addressed();
     }
 
@@ -347,7 +344,7 @@ mod tests {
 
     fn cell_with_nb(id: &str, source: &str, nb_val: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), nb_val);
+        meta.additional.insert("ipso".to_string(), nb_val);
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -604,7 +601,7 @@ mod tests {
         let mut nb = notebook(vec![cell]);
         let updates = parse_updates(r#"{"cell_id": "c1"}"#).unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         assert!(data.test.is_some(), "test should be preserved");
         assert!(data.diff.is_some(), "diff should be preserved");
     }
@@ -625,7 +622,7 @@ mod tests {
             parse_updates(r#"{"cell_id": "c1", "test": null, "diff": null, "fixtures": null}"#)
                 .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         assert!(data.test.is_none());
         assert!(data.diff.is_none());
         assert!(data.fixtures.is_none());
@@ -638,7 +635,7 @@ mod tests {
             parse_updates(r#"{"cell_id": "c1", "test": {"name": "t1", "source": "assert True"}}"#)
                 .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         let test = data.test.unwrap();
         assert_eq!(test.name, "t1");
         assert_eq!(test.source, "assert True");
@@ -649,7 +646,7 @@ mod tests {
         let mut nb = notebook(vec![plain_cell("c1", "x = 1")]);
         let updates = parse_updates(r#"{"cell_id": "c1", "diff": "some diff"}"#).unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         assert_eq!(data.diff.unwrap(), "some diff");
     }
 
@@ -675,7 +672,7 @@ mod tests {
         )
         .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.unwrap();
         assert!(
             fixtures.contains_key("existing"),
@@ -706,7 +703,7 @@ mod tests {
         )
         .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         let f1 = &data.fixtures.unwrap()["f1"];
         assert_eq!(f1.description, "updated");
         assert_eq!(f1.priority, 5);
@@ -733,7 +730,7 @@ mod tests {
         )
         .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         let fixtures = data.fixtures.unwrap();
         assert!(!fixtures.contains_key("f1"), "f1 should be removed");
         assert!(fixtures.contains_key("f2"), "f2 should remain");
@@ -759,7 +756,7 @@ mod tests {
         )
         .unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        let data = nb.cells[0].nota_bene().unwrap();
+        let data = nb.cells[0].ipso().unwrap();
         assert!(
             data.fixtures.is_none(),
             "fixtures should be None when all removed"
@@ -771,9 +768,6 @@ mod tests {
         let mut nb = notebook(vec![plain_cell("c1", "x = 1")]);
         let updates = parse_updates(r#"{"cell_id": "c1"}"#).unwrap();
         apply_updates(updates, &mut nb).unwrap();
-        assert!(
-            nb.cells[0].nota_bene().is_some(),
-            "nota-bene key should exist"
-        );
+        assert!(nb.cells[0].ipso().is_some(), "ipso key should exist");
     }
 }

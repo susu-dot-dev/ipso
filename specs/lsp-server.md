@@ -1,6 +1,6 @@
 ---
 name: LSP server
-overview: A tower-lsp language server that watches .ipynb files and pushes nota-bene diagnostics on open and save, with SHA-based caching for performance.
+overview: A tower-lsp language server that watches .ipynb files and pushes ipso diagnostics on open and save, with SHA-based caching for performance.
 todos: []
 isProject: false
 ---
@@ -9,7 +9,7 @@ isProject: false
 
 ## Purpose
 
-Implement a Language Server Protocol server that passively monitors `.ipynb` notebooks and pushes nota-bene diagnostics to any LSP-compatible client (editor or AI agent). It reacts only to `textDocument/didOpen` and `textDocument/didSave`. It never modifies files.
+Implement a Language Server Protocol server that passively monitors `.ipynb` notebooks and pushes ipso diagnostics to any LSP-compatible client (editor or AI agent). It reacts only to `textDocument/didOpen` and `textDocument/didSave`. It never modifies files.
 
 This spec assumes the diagnostic-renames spec has been implemented: `CellState`, `cell_state()`, and the new `DiagnosticType` variants (`Missing`, `NeedsReview`, `AncestorModified`, `DiffConflict`, `InvalidField`) are in place.
 
@@ -33,7 +33,7 @@ lru       = "0.12"
 Add a `--lsp` flag to the existing `clap` CLI:
 
 ```
-nota-bene --lsp
+ipso --lsp
 ```
 
 When passed, start the tower-lsp server over stdin/stdout and block until the connection closes (analogous to `--mcp`). This is the only change to `main.rs`.
@@ -62,7 +62,7 @@ The LSP needs these separated so it can cache (1) by SHA and always recompute (2
 
 Checks only things that depend on the cell's own content:
 
-- If `cell.nota_bene().diff` exists, try `apply_diff(&cell.source_str(), diff)`. On failure, emit `DiffConflict`.
+- If `cell.ipso().diff` exists, try `apply_diff(&cell.source_str(), diff)`. On failure, emit `DiffConflict`.
 - Future: `InvalidField` checks would go here too.
 
 This function takes a single `&Cell`, not the whole notebook. Its result is determined entirely by the cell's source and metadata — making it safe to cache by the cell's SHA.
@@ -104,7 +104,7 @@ Cache capacity: 256 entries. `tokio::sync::Mutex` because it's held across `.awa
 | Method | Action |
 |---|---|
 | `initialize` | Return `ServerCapabilities` with `text_document_sync: TextDocumentSyncOptions { open_close: true, change: None, save: Some(SaveOptions { include_text: true }), .. }`. |
-| `initialized` | Log `"nota-bene LSP ready"` via `client.log_message`. |
+| `initialized` | Log `"ipso LSP ready"` via `client.log_message`. |
 | `did_open` | Call `self.analyze(params.text_document.uri, params.text_document.text).await`. |
 | `did_save` | Call `self.analyze(params.text_document.uri, params.text.unwrap_or_default()).await`. |
 
@@ -166,7 +166,7 @@ lsp_types::Diagnostic {
         Severity::Warning => DiagnosticSeverity::WARNING,
     }),
     code: Some(NumberOrString::String(diagnostic.r#type.to_string())),
-    source: Some("nota-bene".to_string()),
+    source: Some("ipso".to_string()),
     message: diagnostic.message.clone(),
     ..Default::default()
 }
@@ -231,7 +231,7 @@ This contains the full pipeline (steps 1-5) without the tower-lsp `Client`. Test
 |---|---|
 | `parse_failure_returns_empty` | Malformed JSON → empty diagnostic list |
 | `valid_notebook_no_diagnostics` | Fully accepted notebook → no diagnostics |
-| `missing_cell_produces_error` | Code cell with no nota-bene → `Missing` error pointing at source range |
+| `missing_cell_produces_error` | Code cell with no ipso → `Missing` error pointing at source range |
 | `needs_review_produces_warning` | Cell source changed since accept → `NeedsReview` warning pointing at shas range |
 | `ancestor_modified_produces_warning` | Preceding cell changed → `AncestorModified` warning pointing at shas range |
 | `diff_conflict_produces_error` | Diff doesn't apply → `DiffConflict` error pointing at diff range |

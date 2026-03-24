@@ -7,15 +7,15 @@ PIP    := $(VENV)/bin/pip
 .DEFAULT_GOAL := help
 
 help:
-	@echo "nota-bene Makefile targets:"
+	@echo "ipso Makefile targets:"
 	@echo ""
-	@echo "  make build        Build debug CLI (target/debug/nota-bene)"
+	@echo "  make build        Build debug CLI (target/debug/ipso)"
 	@echo "  make clean        Remove target/"
 	@echo "  make lint         cargo fmt check + clippy"
 	@echo "  make test         Run Rust integration tests"
 	@echo "  make test-wheel   E2E: build wheel, install in fresh venv, verify CLI"
 	@echo ""
-	@echo "  Python packages: run 'make <target>' inside nota-bene/ or pytest-nota-bene/"
+	@echo "  Python packages: run 'make <target>' inside ipso/ or pytest-ipso/"
 	@echo ""
 	@echo "  make help         Show this help"
 
@@ -25,7 +25,7 @@ $(PYTHON):
 	python3 -m venv $(VENV)
 
 test-setup: $(PYTHON)
-	$(PIP) install --quiet -e nota-bene/
+	$(PIP) install --quiet -e ipso/
 
 test: test-setup
 	cargo test
@@ -37,9 +37,9 @@ clean-venv:
 
 test-wheel:
 	@echo "==> Building wheel with maturin..."
-	cd nota-bene && uvx maturin build --release -o ../target/wheels/
+	cd ipso && uvx maturin build --release -o ../target/wheels/
 	@echo "==> Running e2e test..."
-	bash tests/test_wheel_e2e.sh $$(ls target/wheels/nota_bene-*.whl | head -1)
+	bash tests/test_wheel_e2e.sh $$(ls target/wheels/ipso-*.whl | head -1)
 
 # ---- Rust build / lint -----------------------------------------------------
 

@@ -39,7 +39,7 @@ impl LanguageServer for LspBackend {
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
-                name: "nota-bene".to_string(),
+                name: "ipso".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
         })
@@ -64,7 +64,7 @@ impl LanguageServer for LspBackend {
         if let Err(_e) = self.client.register_capability(vec![registration]).await {}
 
         self.client
-            .log_message(MessageType::INFO, "nota-bene LSP ready")
+            .log_message(MessageType::INFO, "ipso LSP ready")
             .await;
     }
 
@@ -194,7 +194,7 @@ fn map_to_lsp_diagnostic(
             Severity::Warning => DiagnosticSeverity::WARNING,
         }),
         code: Some(NumberOrString::String(diag.r#type.to_string())),
-        source: Some("nota-bene".to_string()),
+        source: Some("ipso".to_string()),
         message: format!(
             "[{}] {}: {}",
             cell_index,
@@ -254,7 +254,7 @@ mod tests {
     fn cell_with_shas(id: &str, source: &str, shas: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "shas": shas }));
+            .insert("ipso".to_string(), json!({ "shas": shas }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -271,10 +271,8 @@ mod tests {
         shas: serde_json::Value,
     ) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({ "shas": shas, "diff": diff }),
-        );
+        meta.additional
+            .insert("ipso".to_string(), json!({ "shas": shas, "diff": diff }));
         Cell::Code {
             id: cid(id),
             metadata: meta,

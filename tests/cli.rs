@@ -19,7 +19,7 @@ fn setup_fixture(name: &str) -> (TempDir, std::path::PathBuf) {
     (dir, dest)
 }
 
-/// Run `nota-bene edit <path>` (non-blocking — creates the editor notebook and
+/// Run `ipso edit <path>` (non-blocking — creates the editor notebook and
 /// exits immediately). Returns the exit status.
 fn run_edit(source_path: &Path) -> std::process::ExitStatus {
     std::process::Command::new(common::binary())
@@ -28,10 +28,10 @@ fn run_edit(source_path: &Path) -> std::process::ExitStatus {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .status()
-        .expect("spawn nota-bene edit")
+        .expect("spawn ipso edit")
 }
 
-/// Run `nota-bene edit --continue <path>`. Returns the exit status.
+/// Run `ipso edit --continue <path>`. Returns the exit status.
 fn run_edit_continue(source_path: &Path) -> std::process::ExitStatus {
     std::process::Command::new(common::binary())
         .args(["edit", "--continue", source_path.to_str().unwrap()])
@@ -39,10 +39,10 @@ fn run_edit_continue(source_path: &Path) -> std::process::ExitStatus {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .status()
-        .expect("spawn nota-bene edit --continue")
+        .expect("spawn ipso edit --continue")
 }
 
-/// Run `nota-bene edit --continue --force <path>`. Returns the exit status.
+/// Run `ipso edit --continue --force <path>`. Returns the exit status.
 fn run_edit_continue_force(source_path: &Path) -> std::process::ExitStatus {
     std::process::Command::new(common::binary())
         .args([
@@ -55,10 +55,10 @@ fn run_edit_continue_force(source_path: &Path) -> std::process::ExitStatus {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .status()
-        .expect("spawn nota-bene edit --continue --force")
+        .expect("spawn ipso edit --continue --force")
 }
 
-/// Run `nota-bene edit --clean <path>`. Returns the exit status.
+/// Run `ipso edit --clean <path>`. Returns the exit status.
 fn run_edit_clean(source_path: &Path) -> std::process::ExitStatus {
     std::process::Command::new(common::binary())
         .args(["edit", "--clean", source_path.to_str().unwrap()])
@@ -66,13 +66,13 @@ fn run_edit_clean(source_path: &Path) -> std::process::ExitStatus {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .status()
-        .expect("spawn nota-bene edit --clean")
+        .expect("spawn ipso edit --clean")
 }
 
 /// Run the full edit → modify → continue workflow:
-///   1. `nota-bene edit <path>` — creates editor notebook and exits.
+///   1. `ipso edit <path>` — creates editor notebook and exits.
 ///   2. Call `modify` with the editor notebook path.
-///   3. `nota-bene edit --continue <path>` — applies changes.
+///   3. `ipso edit --continue <path>` — applies changes.
 ///
 /// Returns the `--continue` exit status.
 fn run_edit_with_modifications<F>(source_path: &Path, modify: F) -> std::process::ExitStatus
@@ -87,12 +87,12 @@ where
     let editor_path = source_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!("{}.nota-bene.ipynb", stem));
+        .join(format!("{}.ipso.ipynb", stem));
 
     let edit_status = run_edit(source_path);
     assert!(
         edit_status.success(),
-        "nota-bene edit exited non-zero during setup"
+        "ipso edit exited non-zero during setup"
     );
     assert!(
         editor_path.exists(),
@@ -159,13 +159,13 @@ fn has_error_output(nb: &serde_json::Value) -> bool {
     })
 }
 
-/// Return true if any cell in the notebook JSON has `nota-bene.editor` metadata.
+/// Return true if any cell in the notebook JSON has `ipso.editor` metadata.
 fn has_editor_metadata(nb: &serde_json::Value) -> bool {
     nb["cells"].as_array().map_or(false, |cells| {
         cells.iter().any(|cell| {
             cell["metadata"]
-                .get("nota-bene")
-                .map_or(false, |nb_meta| nb_meta.get("editor").is_some())
+                .get("ipso")
+                .map_or(false, |ipso_meta| ipso_meta.get("editor").is_some())
         })
     })
 }
@@ -175,9 +175,9 @@ fn has_editor_metadata(nb: &serde_json::Value) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Full smoke test:
-///   1. Run `nota-bene edit` on simple.ipynb — exits immediately.
+///   1. Run `ipso edit` on simple.ipynb — exits immediately.
 ///   2. Copy the editor notebook so we can execute it.
-///   3. Run `nota-bene edit --continue` — applies changes.
+///   3. Run `ipso edit --continue` — applies changes.
 ///   4. Execute the copy via nbclient.
 ///   5. Validate cell outputs.
 ///   6. Validate the source notebook was saved back without editor metadata.
@@ -185,13 +185,13 @@ fn has_editor_metadata(nb: &serde_json::Value) -> bool {
 #[test]
 fn smoke_edit_executes_and_saves_cleanly() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
     let copy_path = dir.path().join("editor_copy.ipynb");
     let output_path = dir.path().join("output.ipynb");
 
     // --- edit step ---
     let edit_status = run_edit(&source_path);
-    assert!(edit_status.success(), "nota-bene edit exited non-zero");
+    assert!(edit_status.success(), "ipso edit exited non-zero");
     assert!(editor_path.exists(), "editor notebook not created");
 
     // Copy the editor notebook before --continue deletes it.
@@ -201,7 +201,7 @@ fn smoke_edit_executes_and_saves_cleanly() {
     let continue_status = run_edit_continue(&source_path);
     assert!(
         continue_status.success(),
-        "nota-bene edit --continue exited non-zero"
+        "ipso edit --continue exited non-zero"
     );
 
     // --- validate the editor file was cleaned up ---
@@ -232,7 +232,7 @@ fn smoke_edit_executes_and_saves_cleanly() {
 
     assert!(
         all_output.contains("cell is skipped") || all_output.contains("Skipped"),
-        "expected '%%nb_skip' to produce skip output but got:\n{all_output}"
+        "expected '%%ipso_skip' to produce skip output but got:\n{all_output}"
     );
     assert!(
         all_output.contains("check_total"),
@@ -247,7 +247,7 @@ fn smoke_edit_executes_and_saves_cleanly() {
 
     assert!(
         !has_editor_metadata(&saved_nb),
-        "source notebook still contains nota-bene.editor metadata after save"
+        "source notebook still contains ipso.editor metadata after save"
     );
 }
 
@@ -256,7 +256,7 @@ fn smoke_edit_executes_and_saves_cleanly() {
 #[test]
 fn edit_fails_if_editor_file_already_exists() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
 
     // Pre-create the editor file.
     fs::write(&editor_path, b"{}").expect("create dummy editor file");
@@ -267,7 +267,7 @@ fn edit_fails_if_editor_file_already_exists() {
         .args(["edit", source_path.to_str().unwrap()])
         .stdin(Stdio::null())
         .output()
-        .expect("spawn nota-bene");
+        .expect("spawn ipso");
 
     assert!(
         !output.status.success(),
@@ -291,17 +291,14 @@ fn edit_fails_if_editor_file_already_exists() {
 #[test]
 fn edit_clean_deletes_editor_file() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
 
     let edit_status = run_edit(&source_path);
-    assert!(edit_status.success(), "nota-bene edit exited non-zero");
+    assert!(edit_status.success(), "ipso edit exited non-zero");
     assert!(editor_path.exists(), "editor notebook not created");
 
     let clean_status = run_edit_clean(&source_path);
-    assert!(
-        clean_status.success(),
-        "nota-bene edit --clean exited non-zero"
-    );
+    assert!(clean_status.success(), "ipso edit --clean exited non-zero");
     assert!(
         editor_path.exists(),
         "editor notebook does not exist after --clean (should be recreated)"
@@ -312,7 +309,7 @@ fn edit_clean_deletes_editor_file() {
 #[test]
 fn edit_clean_fails_if_no_editor_file() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
 
     let status = run_edit_clean(&source_path);
     assert!(
@@ -341,13 +338,13 @@ fn edit_continue_fails_if_no_editor_file() {
 // Round-trip and simulation tests
 // ---------------------------------------------------------------------------
 
-/// Helper: extract the `nota-bene` metadata object from a cell identified by
+/// Helper: extract the `ipso` metadata object from a cell identified by
 /// its `id` field. Returns `serde_json::Value::Null` if not found.
 fn cell_nb_meta<'a>(nb: &'a serde_json::Value, cell_id: &str) -> &'a serde_json::Value {
     if let Some(cells) = nb["cells"].as_array() {
         for cell in cells {
             if cell["id"].as_str() == Some(cell_id) {
-                let meta = &cell["metadata"]["nota-bene"];
+                let meta = &cell["metadata"]["ipso"];
                 if !meta.is_null() {
                     return meta;
                 }
@@ -357,7 +354,7 @@ fn cell_nb_meta<'a>(nb: &'a serde_json::Value, cell_id: &str) -> &'a serde_json:
     &serde_json::Value::Null
 }
 
-/// After a round-trip with no user modifications the `nota-bene` metadata on
+/// After a round-trip with no user modifications the `ipso` metadata on
 /// every source cell must preserve the original non-shas fields.
 /// SHA snapshots are now stamped inside `apply_editor_to_source` for every cell
 /// that goes through the editor, so a new `shas` field will be present — that
@@ -371,10 +368,7 @@ fn round_trip_no_changes_preserves_metadata() {
             .expect("parse original");
 
     let status = run_edit_with_modifications(&source_path, |_| {});
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -393,12 +387,12 @@ fn round_trip_no_changes_preserves_metadata() {
 
         assert_eq!(
             before, &after_without_shas,
-            "nota-bene metadata changed for cell '{cell_id}' despite no user edits \
+            "ipso metadata changed for cell '{cell_id}' despite no user edits \
              (ignoring newly-stamped shas)"
         );
     }
     assert!(
-        !dir.path().join("simple.nota-bene.ipynb").exists(),
+        !dir.path().join("simple.ipso.ipynb").exists(),
         "editor notebook not deleted after successful --continue"
     );
 }
@@ -415,10 +409,10 @@ fn edit_rename_fixture_updates_source() {
 
         if let Some(cells) = nb["cells"].as_array_mut() {
             for cell in cells.iter_mut() {
-                let role = cell["metadata"]["nota-bene"]["editor"]["role"]
+                let role = cell["metadata"]["ipso"]["editor"]["role"]
                     .as_str()
                     .unwrap_or("");
-                let cell_id = cell["metadata"]["nota-bene"]["editor"]["cell_id"]
+                let cell_id = cell["metadata"]["ipso"]["editor"]["cell_id"]
                     .as_str()
                     .unwrap_or("");
                 if role == "fixture" && cell_id == "compute-total" {
@@ -447,10 +441,7 @@ fn edit_rename_fixture_updates_source() {
         )
         .expect("write modified editor notebook");
     });
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -480,10 +471,10 @@ fn edit_modified_source_writes_diff() {
 
         if let Some(cells) = nb["cells"].as_array_mut() {
             for cell in cells.iter_mut() {
-                let role = cell["metadata"]["nota-bene"]["editor"]["role"]
+                let role = cell["metadata"]["ipso"]["editor"]["role"]
                     .as_str()
                     .unwrap_or("");
-                let cell_id = cell["metadata"]["nota-bene"]["editor"]["cell_id"]
+                let cell_id = cell["metadata"]["ipso"]["editor"]["cell_id"]
                     .as_str()
                     .unwrap_or("");
                 if role == "patched-source" && cell_id == "compute-total" {
@@ -499,10 +490,7 @@ fn edit_modified_source_writes_diff() {
         )
         .expect("write modified editor notebook");
     });
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -535,9 +523,8 @@ fn edit_add_fixture_by_position() {
         let insert_idx = cells
             .iter()
             .position(|c| {
-                c["metadata"]["nota-bene"]["editor"]["role"].as_str() == Some("patched-source")
-                    && c["metadata"]["nota-bene"]["editor"]["cell_id"].as_str()
-                        == Some("compute-total")
+                c["metadata"]["ipso"]["editor"]["role"].as_str() == Some("patched-source")
+                    && c["metadata"]["ipso"]["editor"]["cell_id"].as_str() == Some("compute-total")
             })
             .expect("patched-source cell for compute-total not found");
 
@@ -558,10 +545,7 @@ fn edit_add_fixture_by_position() {
         )
         .expect("write modified editor notebook");
     });
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -581,7 +565,7 @@ fn edit_add_fixture_by_position() {
 /// A cell with explicit `null` values for `fixtures`, `diff`, and `test`
 /// no longer preserves those as JSON nulls after a round-trip — in the new
 /// simplified model, `None` is serialized as an absent key, not null.
-/// The nota-bene key itself is preserved (since the cell already had it).
+/// The ipso key itself is preserved (since the cell already had it).
 #[test]
 fn edit_explicit_nulls_become_absent_after_round_trip() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
@@ -600,10 +584,7 @@ fn edit_explicit_nulls_become_absent_after_round_trip() {
     );
 
     let status = run_edit_with_modifications(&source_path, |_| {});
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -611,11 +592,8 @@ fn edit_explicit_nulls_become_absent_after_round_trip() {
 
     let meta = cell_nb_meta(&saved, "reviewed-pass");
 
-    // The nota-bene key itself must still exist (cell already had it).
-    assert!(
-        !meta.is_null(),
-        "nota-bene key was removed from 'reviewed-pass'"
-    );
+    // The ipso key itself must still exist (cell already had it).
+    assert!(!meta.is_null(), "ipso key was removed from 'reviewed-pass'");
 
     // In the new model, null fields are absent (not written as null).
     for key in &["fixtures", "diff", "test"] {
@@ -627,17 +605,17 @@ fn edit_explicit_nulls_become_absent_after_round_trip() {
     }
 }
 
-/// The section header for a cell with nota-bene but no shas must contain
-/// "Needs review". `compute-total` in simple.ipynb has nota-bene metadata
+/// The section header for a cell with ipso but no shas must contain
+/// "Needs review". `compute-total` in simple.ipynb has ipso metadata
 /// but no `shas` entry → Missing state.
 #[test]
 fn edit_notebook_contains_guide_cells() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
 
     assert!(
         run_edit(&source_path).success(),
-        "nota-bene edit exited non-zero"
+        "ipso edit exited non-zero"
     );
 
     let raw = fs::read_to_string(&editor_path).expect("read editor notebook");
@@ -647,7 +625,7 @@ fn edit_notebook_contains_guide_cells() {
         .as_array()
         .expect("cells")
         .iter()
-        .filter(|c| c["metadata"]["nota-bene"]["editor"]["role"].as_str() == Some("guide"))
+        .filter(|c| c["metadata"]["ipso"]["editor"]["role"].as_str() == Some("guide"))
         .count();
 
     assert!(
@@ -661,7 +639,7 @@ fn edit_continue_does_not_warn_on_guide_markdown_cells() {
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     assert!(
         run_edit(&source_path).success(),
-        "nota-bene edit exited non-zero"
+        "ipso edit exited non-zero"
     );
 
     let output = std::process::Command::new(common::binary())
@@ -670,7 +648,7 @@ fn edit_continue_does_not_warn_on_guide_markdown_cells() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene edit --continue");
+        .expect("spawn ipso edit --continue");
 
     assert!(
         output.status.success(),
@@ -688,10 +666,10 @@ fn edit_continue_does_not_warn_on_guide_markdown_cells() {
 #[test]
 fn edit_unaccepted_cell_header_contains_needs_review_and_reason() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
-    let editor_path = dir.path().join("simple.nota-bene.ipynb");
+    let editor_path = dir.path().join("simple.ipso.ipynb");
 
     let edit_status = run_edit(&source_path);
-    assert!(edit_status.success(), "nota-bene edit exited non-zero");
+    assert!(edit_status.success(), "ipso edit exited non-zero");
 
     let raw = fs::read_to_string(&editor_path).expect("read editor notebook");
     let nb: serde_json::Value = serde_json::from_str(&raw).expect("parse editor notebook");
@@ -702,8 +680,8 @@ fn edit_unaccepted_cell_header_contains_needs_review_and_reason() {
         .expect("cells")
         .iter()
         .find(|c| {
-            c["metadata"]["nota-bene"]["editor"]["role"].as_str() == Some("section-header")
-                && c["metadata"]["nota-bene"]["editor"]["cell_id"].as_str() == Some("compute-total")
+            c["metadata"]["ipso"]["editor"]["role"].as_str() == Some("section-header")
+                && c["metadata"]["ipso"]["editor"]["cell_id"].as_str() == Some("compute-total")
         })
         .map(|c| {
             let src = &c["source"];
@@ -733,30 +711,27 @@ fn edit_unaccepted_cell_header_contains_needs_review_and_reason() {
 }
 
 /// After `edit --continue`, the test source stored in the notebook must not
-/// begin with `%%nb_skip` — it should have been stripped during apply.
+/// begin with `%%ipso_skip` — it should have been stripped during apply.
 #[test]
-fn edit_continue_strips_nb_skip_from_test_source() {
+fn edit_continue_strips_ipso_skip_from_test_source() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let _ = dir;
 
     let status = run_edit_with_modifications(&source_path, |_| {});
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
             .expect("parse saved");
 
-    // Check that no cell's test.source starts with %%nb_skip.
+    // Check that no cell's test.source starts with %%ipso_skip.
     if let Some(cells) = saved["cells"].as_array() {
         for cell in cells {
-            let test_src = &cell["metadata"]["nota-bene"]["test"]["source"];
+            let test_src = &cell["metadata"]["ipso"]["test"]["source"];
             if let Some(s) = test_src.as_str() {
                 assert!(
-                    !s.starts_with("%%nb_skip"),
-                    "test source still contains %%nb_skip after --continue: {s}"
+                    !s.starts_with("%%ipso_skip"),
+                    "test source still contains %%ipso_skip after --continue: {s}"
                 );
             } else if let Some(arr) = test_src.as_array() {
                 let joined = arr
@@ -765,8 +740,8 @@ fn edit_continue_strips_nb_skip_from_test_source() {
                     .collect::<Vec<_>>()
                     .join("");
                 assert!(
-                    !joined.starts_with("%%nb_skip"),
-                    "test source still contains %%nb_skip after --continue: {joined}"
+                    !joined.starts_with("%%ipso_skip"),
+                    "test source still contains %%ipso_skip after --continue: {joined}"
                 );
             }
         }
@@ -780,7 +755,7 @@ fn edit_continue_fails_on_source_conflict() {
 
     // Create the editor notebook.
     let edit_status = run_edit(&source_path);
-    assert!(edit_status.success(), "nota-bene edit exited non-zero");
+    assert!(edit_status.success(), "ipso edit exited non-zero");
 
     // Modify the source notebook (simulate an external change).
     let raw = fs::read_to_string(&source_path).expect("read source");
@@ -809,14 +784,14 @@ fn edit_continue_fails_on_source_conflict() {
 }
 
 /// `edit --continue --force` succeeds even when the source has changed,
-/// stripping all nota-bene metadata and applying the editor notebook.
+/// stripping all ipso metadata and applying the editor notebook.
 #[test]
 fn edit_continue_force_succeeds_despite_conflict() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let _ = dir;
 
     let edit_status = run_edit(&source_path);
-    assert!(edit_status.success(), "nota-bene edit exited non-zero");
+    assert!(edit_status.success(), "ipso edit exited non-zero");
 
     // Modify the source notebook.
     let raw = fs::read_to_string(&source_path).expect("read source");
@@ -844,18 +819,15 @@ fn edit_continue_force_succeeds_despite_conflict() {
 }
 
 /// After `edit --continue`, cells that went through the editor and have
-/// nota-bene metadata must have a `shas` snapshot stamped on them.
-/// `compute-total` and `reviewed-pass` both have nota-bene in simple.ipynb.
+/// ipso metadata must have a `shas` snapshot stamped on them.
+/// `compute-total` and `reviewed-pass` both have ipso in simple.ipynb.
 #[test]
-fn edit_continue_stamps_shas_on_nota_bene_cells() {
+fn edit_continue_stamps_shas_on_ipso_cells() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let _ = dir;
 
     let status = run_edit_with_modifications(&source_path, |_| {});
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
@@ -863,10 +835,7 @@ fn edit_continue_stamps_shas_on_nota_bene_cells() {
 
     for cell_id in &["compute-total", "reviewed-pass"] {
         let meta = cell_nb_meta(&saved, cell_id);
-        assert!(
-            !meta.is_null(),
-            "cell '{cell_id}' has no nota-bene metadata"
-        );
+        assert!(!meta.is_null(), "cell '{cell_id}' has no ipso metadata");
         let shas = meta.get("shas");
         assert!(
             shas.is_some() && shas.unwrap().is_array(),
@@ -880,29 +849,26 @@ fn edit_continue_stamps_shas_on_nota_bene_cells() {
     }
 }
 
-/// After `edit --continue`, cells without nota-bene metadata must NOT have
+/// After `edit --continue`, cells without ipso metadata must NOT have
 /// shas stamped on them — only cells that actually went through the editor
-/// with nota-bene are touched. `plain-data` has no nota-bene in simple.ipynb.
+/// with ipso are touched. `plain-data` has no ipso in simple.ipynb.
 #[test]
 fn edit_continue_does_not_stamp_shas_on_plain_cells() {
     let (dir, source_path) = setup_fixture("simple.ipynb");
     let _ = dir;
 
     let status = run_edit_with_modifications(&source_path, |_| {});
-    assert!(
-        status.success(),
-        "nota-bene edit --continue exited non-zero"
-    );
+    assert!(status.success(), "ipso edit --continue exited non-zero");
 
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&source_path).expect("read saved"))
             .expect("parse saved");
 
-    // plain-data has no nota-bene metadata — its nota-bene key must remain absent.
+    // plain-data has no ipso metadata — its ipso key must remain absent.
     let meta = cell_nb_meta(&saved, "plain-data");
     assert!(
         meta.is_null(),
-        "plain-data should have no nota-bene metadata after --continue, got: {meta}"
+        "plain-data should have no ipso metadata after --continue, got: {meta}"
     );
 }
 
@@ -910,7 +876,7 @@ fn edit_continue_does_not_stamp_shas_on_plain_cells() {
 // nb view tests
 // ===========================================================================
 
-/// Run `nota-bene view <args>` and return (stdout, stderr, exit status).
+/// Run `ipso view <args>` and return (stdout, stderr, exit status).
 fn run_view(source_path: &Path, extra_args: &[&str]) -> (String, String, std::process::ExitStatus) {
     let mut cmd = std::process::Command::new(common::binary());
     cmd.arg("view").arg(source_path);
@@ -922,7 +888,7 @@ fn run_view(source_path: &Path, extra_args: &[&str]) -> (String, String, std::pr
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene view");
+        .expect("spawn ipso view");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (stdout, stderr, out.status)
@@ -1178,7 +1144,7 @@ fn view_no_filters_returns_empty_array_for_no_code_cells() {
 // nb scaffold tests
 // ===========================================================================
 
-/// Run `nota-bene scaffold <args>` and return (stdout, stderr, exit status).
+/// Run `ipso scaffold <args>` and return (stdout, stderr, exit status).
 fn run_scaffold(args: &[&str]) -> (String, String, std::process::ExitStatus) {
     let mut cmd = std::process::Command::new(common::binary());
     cmd.arg("scaffold");
@@ -1190,7 +1156,7 @@ fn run_scaffold(args: &[&str]) -> (String, String, std::process::ExitStatus) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene scaffold");
+        .expect("spawn ipso scaffold");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (stdout, stderr, out.status)
@@ -1259,7 +1225,7 @@ fn scaffold_test_minimal_uses_defaults() {
 // nb status tests
 // ===========================================================================
 
-/// Run `nota-bene status <args>` and return (stdout, stderr, exit status).
+/// Run `ipso status <args>` and return (stdout, stderr, exit status).
 fn run_status(
     source_path: &Path,
     extra_args: &[&str],
@@ -1274,7 +1240,7 @@ fn run_status(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene status");
+        .expect("spawn ipso status");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (stdout, stderr, out.status)
@@ -1282,7 +1248,7 @@ fn run_status(
 
 #[test]
 fn status_exits_nonzero_when_invalid_cells_exist() {
-    // simple.ipynb has cells with nota-bene but no shas → missing → invalid
+    // simple.ipynb has cells with ipso but no shas → missing → invalid
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (stdout, _stderr, status) = run_status(&source_path, &[]);
     assert!(
@@ -1339,7 +1305,7 @@ fn status_with_filter_narrows_cells() {
 // nb accept tests
 // ===========================================================================
 
-/// Run `nota-bene accept <args>` and return (stdout, stderr, exit status).
+/// Run `ipso accept <args>` and return (stdout, stderr, exit status).
 fn run_accept(
     source_path: &Path,
     extra_args: &[&str],
@@ -1354,7 +1320,7 @@ fn run_accept(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene accept");
+        .expect("spawn ipso accept");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (stdout, stderr, out.status)
@@ -1444,7 +1410,7 @@ fn accept_with_filter_only_accepts_matching_cells() {
 // nb update tests
 // ===========================================================================
 
-/// Run `nota-bene update <args>` and return (stdout, stderr, exit status).
+/// Run `ipso update <args>` and return (stdout, stderr, exit status).
 fn run_update(
     source_path: &Path,
     extra_args: &[&str],
@@ -1459,7 +1425,7 @@ fn run_update(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .expect("spawn nota-bene update");
+        .expect("spawn ipso update");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (stdout, stderr, out.status)
@@ -1728,9 +1694,9 @@ fn update_stdin_mode_writes_to_stdout() {
         .find(|c| c["id"].as_str() == Some("plain-data"))
         .unwrap();
     assert!(
-        plain_orig["metadata"].get("nota-bene").is_none()
-            || plain_orig["metadata"]["nota-bene"].get("diff").is_none()
-            || plain_orig["metadata"]["nota-bene"]["diff"].is_null(),
+        plain_orig["metadata"].get("ipso").is_none()
+            || plain_orig["metadata"]["ipso"].get("diff").is_none()
+            || plain_orig["metadata"]["ipso"]["diff"].is_null(),
         "original file should not be modified in --stdin mode"
     );
 }
@@ -1927,8 +1893,7 @@ fn accept_stdin_mode_writes_to_stdout() {
         .find(|c| c["id"].as_str() == Some("compute-total"))
         .unwrap();
     assert!(
-        ct["metadata"]["nota-bene"].get("shas").is_none()
-            || ct["metadata"]["nota-bene"]["shas"].is_null(),
+        ct["metadata"]["ipso"].get("shas").is_none() || ct["metadata"]["ipso"]["shas"].is_null(),
         "original file should not be modified in --stdin mode"
     );
 }
@@ -1937,7 +1902,7 @@ fn accept_stdin_mode_writes_to_stdout() {
 
 #[test]
 fn accept_all_stamps_plain_cells_with_shas_only() {
-    // accept --all now creates nota-bene shas on plain code cells so they become
+    // accept --all now creates ipso shas on plain code cells so they become
     // valid. Fixtures, diff, and test remain absent — accept does not invent them.
     let (_dir, source_path) = setup_fixture("simple.ipynb");
     let (_stdout, _stderr, status) = run_accept(&source_path, &["--all"]);
@@ -2005,7 +1970,7 @@ fn view_filter_diagnostics_type() {
         run_view(&source_path, &["--filter", "diagnostics.type:missing"]);
     assert!(status.success());
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
-    // Only cells with nota-bene but no shas should match
+    // Only cells with ipso but no shas should match
     for cell in &arr {
         assert!(
             cell["status"]["diagnostics"]
@@ -2130,16 +2095,16 @@ fn update_validation_failure_stdout_empty() {
 }
 
 // ===========================================================================
-// nota-bene test
+// ipso test
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Run `nota-bene test <path> [args...]` using the test venv Python.
+/// Run `ipso test <path> [args...]` using the test venv Python.
 /// Returns (stdout, stderr, exit_status).
-fn run_nota_bene_test(
+fn run_ipso_test(
     nb_path: &std::path::Path,
     args: &[&str],
 ) -> (String, String, std::process::ExitStatus) {
@@ -2150,7 +2115,7 @@ fn run_nota_bene_test(
         .arg(common::python())
         .args(args)
         .output()
-        .expect("spawn nota-bene test");
+        .expect("spawn ipso test");
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -2158,7 +2123,7 @@ fn run_nota_bene_test(
     )
 }
 
-/// Parse the stdout of `nota-bene test` as a JSON array of results.
+/// Parse the stdout of `ipso test` as a JSON array of results.
 fn parse_test_results(stdout: &str) -> Vec<serde_json::Value> {
     serde_json::from_str(stdout)
         .unwrap_or_else(|e| panic!("failed to parse test results JSON: {e}\nstdout: {stdout}"))
@@ -2171,7 +2136,7 @@ fn parse_test_results(stdout: &str) -> Vec<serde_json::Value> {
 #[test]
 fn test_pass_exits_zero() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert!(
         status.success(),
         "expected exit 0 for passing test, got {:?}\nstdout: {stdout}\nstderr: {stderr}",
@@ -2182,7 +2147,7 @@ fn test_pass_exits_zero() {
 #[test]
 fn test_pass_result_is_completed() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["status"].as_str(), Some("completed"));
@@ -2194,7 +2159,7 @@ fn test_pass_result_is_completed() {
 fn test_pass_implicit_subtest_passed() {
     // No explicit subtest() calls → single implicit subtest using test name
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2213,7 +2178,7 @@ fn test_pass_implicit_subtest_passed() {
 fn test_pass_fixture_runs_before_cell() {
     // Fixture overrides data=[10,20,30] so total==60, not 6 from data=[1,2,3]
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, status) = run_ipso_test(&nb, &[]);
     assert!(status.success());
     let results = parse_test_results(&stdout);
     assert_eq!(results[0]["subtests"][0]["passed"].as_bool(), Some(true));
@@ -2223,7 +2188,7 @@ fn test_pass_fixture_runs_before_cell() {
 fn test_pass_with_diff_applied() {
     // Diff patches `x = "original"` → `x = path_val`; fixture sets path_val = "patched"
     let nb = common::fixtures_dir().join("test-with-diff.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert!(
         status.success(),
         "expected exit 0\nstdout: {stdout}\nstderr: {stderr}"
@@ -2240,7 +2205,7 @@ fn test_pass_with_diff_applied() {
 #[test]
 fn test_fail_assertion_exits_one() {
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert_eq!(
         status.code(),
         Some(1),
@@ -2252,7 +2217,7 @@ fn test_fail_assertion_exits_one() {
 fn test_fail_assertion_result_is_completed_not_error() {
     // A test assertion failure is "completed" with passed=false, not an infra "error"
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(results[0]["status"].as_str(), Some("completed"));
 }
@@ -2260,7 +2225,7 @@ fn test_fail_assertion_result_is_completed_not_error() {
 #[test]
 fn test_fail_assertion_subtest_not_passed() {
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2276,7 +2241,7 @@ fn test_fail_assertion_subtest_not_passed() {
 #[test]
 fn test_fail_assertion_error_and_traceback_present() {
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let sub = &results[0]["subtests"][0];
     assert!(
@@ -2306,7 +2271,7 @@ fn test_fail_assertion_error_and_traceback_present() {
 #[test]
 fn test_subtests_partial_fail_exits_one() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert_eq!(
         status.code(),
         Some(1),
@@ -2318,7 +2283,7 @@ fn test_subtests_partial_fail_exits_one() {
 fn test_subtests_both_reported() {
     // A failing subtest must not prevent subsequent subtests from running/reporting
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2333,7 +2298,7 @@ fn test_subtests_both_reported() {
 #[test]
 fn test_subtests_first_passes_second_fails() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2357,7 +2322,7 @@ fn test_subtests_first_passes_second_fails() {
 #[test]
 fn test_subtests_names_preserved() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2377,7 +2342,7 @@ fn test_subtests_names_preserved() {
 #[test]
 fn test_fixture_error_exits_two() {
     let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert_eq!(
         status.code(),
         Some(2),
@@ -2390,7 +2355,7 @@ fn test_fixture_error_status_is_error_not_completed() {
     // A fixture failure is an infrastructure error — must not be reported as
     // "completed" even though allow_errors=True lets execution continue past it
     let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(
         results[0]["status"].as_str(),
@@ -2402,7 +2367,7 @@ fn test_fixture_error_status_is_error_not_completed() {
 #[test]
 fn test_fixture_error_phase_is_fixture() {
     let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(results[0]["error"]["phase"].as_str(), Some("fixture"));
     assert_eq!(
@@ -2414,7 +2379,7 @@ fn test_fixture_error_phase_is_fixture() {
 #[test]
 fn test_fixture_error_detail_contains_exception() {
     let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let detail = results[0]["error"]["detail"].as_str().unwrap();
     assert!(
@@ -2426,7 +2391,7 @@ fn test_fixture_error_detail_contains_exception() {
 #[test]
 fn test_source_cell_error_exits_two() {
     let nb = common::fixtures_dir().join("test-source-error.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert_eq!(
         status.code(),
         Some(2),
@@ -2437,7 +2402,7 @@ fn test_source_cell_error_exits_two() {
 #[test]
 fn test_source_cell_error_status_is_error() {
     let nb = common::fixtures_dir().join("test-source-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(results[0]["status"].as_str(), Some("error"));
 }
@@ -2445,7 +2410,7 @@ fn test_source_cell_error_status_is_error() {
 #[test]
 fn test_source_cell_error_phase_is_cell_source() {
     let nb = common::fixtures_dir().join("test-source-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     assert_eq!(results[0]["error"]["phase"].as_str(), Some("cell_source"));
     assert_eq!(
@@ -2457,7 +2422,7 @@ fn test_source_cell_error_phase_is_cell_source() {
 #[test]
 fn test_source_cell_error_detail_contains_exception() {
     let nb = common::fixtures_dir().join("test-source-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let detail = results[0]["error"]["detail"].as_str().unwrap();
     assert!(
@@ -2473,7 +2438,7 @@ fn test_source_cell_error_detail_contains_exception() {
 #[test]
 fn test_parallel_all_cells_run() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, stderr, status) = run_ipso_test(&nb, &[]);
     assert!(
         status.success(),
         "expected exit 0\nstdout: {stdout}\nstderr: {stderr}"
@@ -2485,7 +2450,7 @@ fn test_parallel_all_cells_run() {
 #[test]
 fn test_parallel_correct_cell_ids_present() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let cell_ids: Vec<&str> = results
         .iter()
@@ -2498,7 +2463,7 @@ fn test_parallel_correct_cell_ids_present() {
 #[test]
 fn test_parallel_both_pass() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, status) = run_ipso_test(&nb, &[]);
     assert!(status.success());
     let results = parse_test_results(&stdout);
     for r in &results {
@@ -2514,7 +2479,7 @@ fn test_parallel_both_pass() {
 #[test]
 fn test_filter_selects_single_cell() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &["--filter", "cell:cell-a"]);
+    let (stdout, _stderr, status) = run_ipso_test(&nb, &["--filter", "cell:cell-a"]);
     assert!(status.success());
     let results = parse_test_results(&stdout);
     assert_eq!(results.len(), 1);
@@ -2524,7 +2489,7 @@ fn test_filter_selects_single_cell() {
 #[test]
 fn test_filter_excludes_other_cell() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &["--filter", "cell:cell-b"]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &["--filter", "cell:cell-b"]);
     let results = parse_test_results(&stdout);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["cell_id"].as_str(), Some("cell-b"));
@@ -2533,7 +2498,7 @@ fn test_filter_excludes_other_cell() {
 #[test]
 fn test_no_matching_filter_returns_empty_array() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
-    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &["--filter", "cell:nonexistent"]);
+    let (stdout, _stderr, status) = run_ipso_test(&nb, &["--filter", "cell:nonexistent"]);
     assert!(status.success());
     let results = parse_test_results(&stdout);
     assert!(results.is_empty());
@@ -2546,7 +2511,7 @@ fn test_no_matching_filter_returns_empty_array() {
 #[test]
 fn test_no_filter_runs_all_cells() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, status) = run_ipso_test(&nb, &[]);
     assert!(
         status.success(),
         "expected zero exit when no --filter given"
@@ -2563,7 +2528,7 @@ fn test_no_filter_runs_all_cells() {
 #[test]
 fn test_output_is_valid_json_array() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
     assert!(parsed.is_array(), "output must be a JSON array");
@@ -2572,7 +2537,7 @@ fn test_output_is_valid_json_array() {
 #[test]
 fn test_completed_result_schema() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let r = &results[0];
     assert!(r.get("cell_id").is_some(), "missing cell_id");
@@ -2592,7 +2557,7 @@ fn test_completed_result_schema() {
 #[test]
 fn test_error_result_schema() {
     let nb = common::fixtures_dir().join("test-fixture-error.ipynb");
-    let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
+    let (stdout, _stderr, _status) = run_ipso_test(&nb, &[]);
     let results = parse_test_results(&stdout);
     let r = &results[0];
     assert!(r.get("cell_id").is_some(), "missing cell_id");

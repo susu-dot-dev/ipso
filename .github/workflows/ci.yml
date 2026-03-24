@@ -44,7 +44,7 @@ jobs:
       - name: Run Rust integration tests
         run: make test
 
-  test-nb:
+  test-ipso:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -63,20 +63,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: nota-bene/.python-version
+          python-version-file: ipso/.python-version
 
       - name: Run tests
-        run: make -C nota-bene test
+        run: make -C ipso test
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7
         with:
           name: coverage-nb
           path: |
-            nota-bene/coverage.xml
-            nota-bene/htmlcov/
+            ipso/coverage.xml
+            ipso/htmlcov/
 
-  test-pnb:
+  test-pipso:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -95,23 +95,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: pytest-nota-bene/.python-version
+          python-version-file: pytest-ipso/.python-version
 
-      - name: Install nota-bene (builds CLI from source)
-        run: uv pip install --system ./nota-bene/
+      - name: Install ipso (builds CLI from source)
+        run: uv pip install --system ./ipso/
 
       - name: Run tests
-        run: make -C pytest-nota-bene test
+        run: make -C pytest-ipso test
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7
         with:
           name: coverage-pnb
           path: |
-            pytest-nota-bene/coverage.xml
-            pytest-nota-bene/htmlcov/
+            pytest-ipso/coverage.xml
+            pytest-ipso/htmlcov/
 
-  lint-nb:
+  lint-ipso:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -130,12 +130,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: nota-bene/.python-version
+          python-version-file: ipso/.python-version
 
       - name: Lint, format, and type-check
-        run: make -C nota-bene all
+        run: make -C ipso all
 
-  lint-pnb:
+  lint-pipso:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -148,13 +148,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: pytest-nota-bene/.python-version
+          python-version-file: pytest-ipso/.python-version
 
       - name: Lint, format, and type-check
-        run: make -C pytest-nota-bene all
+        run: make -C pytest-ipso all
 
   coverage-comment:
-    needs: [test-nb, test-pnb]
+    needs: [test-ipso, test-pipso]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
@@ -163,14 +163,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download nota-bene coverage
+      - name: Download ipso coverage
         uses: actions/download-artifact@v8
         with:
           name: coverage-nb
-          path: nota-bene
+          path: ipso
 
       - name: Post coverage comment
         uses: orgoro/coverage@v3.2
         with:
-          coverageFile: nota-bene/coverage.xml
+          coverageFile: ipso/coverage.xml
           token: ${{ secrets.GITHUB_TOKEN }}

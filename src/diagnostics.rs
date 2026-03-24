@@ -11,7 +11,7 @@ use crate::shas::{cell_state, CellState};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticType {
-    /// Code cell has no nota-bene setup at all, or has nota-bene but no shas.
+    /// Code cell has no ipso setup at all, or has ipso but no shas.
     Missing,
     /// This cell's own content changed since last accept.
     NeedsReview,
@@ -70,7 +70,7 @@ pub struct CellStatus {
 /// is safe to cache keyed by the cell's SHA.
 pub fn compute_own_diagnostics(cell: &nbformat::v4::Cell) -> Vec<Diagnostic> {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    if let Some(data) = cell.nota_bene() {
+    if let Some(data) = cell.ipso() {
         if let Some(diff) = &data.diff {
             let source = cell.source_str();
             if apply_diff(&source, diff).is_err() {
@@ -171,7 +171,7 @@ mod tests {
     fn cell_with_shas(id: &str, source: &str, shas: serde_json::Value) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "shas": shas }));
+            .insert("ipso".to_string(), json!({ "shas": shas }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -183,7 +183,7 @@ mod tests {
 
     fn cell_with_nb_no_shas(id: &str, source: &str) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert("nota-bene".to_string(), json!({}));
+        meta.additional.insert("ipso".to_string(), json!({}));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -217,10 +217,8 @@ mod tests {
         shas: serde_json::Value,
     ) -> Cell {
         let mut meta = blank_cell_metadata();
-        meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({ "shas": shas, "diff": diff }),
-        );
+        meta.additional
+            .insert("ipso".to_string(), json!({ "shas": shas, "diff": diff }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -233,7 +231,7 @@ mod tests {
     fn cell_with_diff_no_shas(id: &str, source: &str, diff: &str) -> Cell {
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "diff": diff }));
+            .insert("ipso".to_string(), json!({ "diff": diff }));
         Cell::Code {
             id: cid(id),
             metadata: meta,
@@ -345,7 +343,7 @@ mod tests {
 
     #[test]
     fn valid_cell_with_clean_diff_produces_no_diagnostics() {
-        // In nota-bene the cell stores the original source; the diff is applied
+        // In ipso the cell stores the original source; the diff is applied
         // forward to get the patched version. apply_diff(original, diff) must succeed.
         let original = "x = 1\n";
         let patched = "x = 99\n";
@@ -355,7 +353,7 @@ mod tests {
         let cell_for_sha = {
             let mut m = blank_cell_metadata();
             m.additional
-                .insert("nota-bene".to_string(), json!({ "diff": diff }));
+                .insert("ipso".to_string(), json!({ "diff": diff }));
             Cell::Code {
                 id: cid("c1"),
                 metadata: m,
@@ -452,7 +450,7 @@ mod tests {
 
     #[test]
     fn missing_and_diff_conflict_both_emitted_when_nb_has_diff_but_no_shas() {
-        // Cell has nota-bene with a diff but no shas — Missing fires.
+        // Cell has ipso with a diff but no shas — Missing fires.
         // The diff also doesn't apply — DiffConflict fires too.
         let bad_diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old line\n+new line\n".to_string();
         let cell = cell_with_diff_no_shas("c1", "completely different", &bad_diff);
@@ -591,10 +589,8 @@ mod tests {
         // Valid shas so no cell-state issues, but diff that won't apply
         let c1_plain = plain_cell("c1", "completely different");
         let shas = json!([sha_json(&c1_plain)]);
-        meta.additional.insert(
-            "nota-bene".to_string(),
-            json!({ "shas": shas, "diff": diff }),
-        );
+        meta.additional
+            .insert("ipso".to_string(), json!({ "shas": shas, "diff": diff }));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
@@ -631,7 +627,7 @@ mod tests {
         let diff = crate::diff_utils::compute_diff(original, patched).unwrap();
         let mut meta = blank_cell_metadata();
         meta.additional
-            .insert("nota-bene".to_string(), json!({ "diff": diff }));
+            .insert("ipso".to_string(), json!({ "diff": diff }));
         let cell = Cell::Code {
             id: cid("c1"),
             metadata: meta,
