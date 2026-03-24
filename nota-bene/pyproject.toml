@@ -8,11 +8,15 @@ requires-python = ">=3.12"
 dependencies = ["nbclient>=0.7", "ipykernel"]
 
 [build-system]
-requires = ["uv_build>=0.10.9,<0.11.0"]
-build-backend = "uv_build"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
-[tool.uv.build-backend]
-source-exclude = ["tests/**"]
+[tool.maturin]
+manifest-path = "../Cargo.toml"
+bindings = "bin"
+python-source = "src"
+module-name = "nota_bene"
+python-packages = ["nota_bene"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-cov>=4.1.0"]

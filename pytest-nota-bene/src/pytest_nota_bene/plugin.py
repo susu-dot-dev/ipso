@@ -48,11 +48,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         type=int,
         help="Timeout in seconds passed to nota-bene test --timeout (default: 60)",
     )
-    group.addoption(
-        "--nb-binary",
-        default="nota-bene",
-        help="Path to the nota-bene binary (default: nota-bene, assumes it is on PATH)",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,11 +106,10 @@ class NotaBeneCellTest(pytest.Item):
 
     def runtest(self) -> None:
         config = self.config
-        binary: str = config.getoption("--nb-binary")
         timeout: int = config.getoption("--nb-timeout")
 
         cmd = [
-            binary,
+            "nota-bene",
             "test",
             str(self.path),
             "--filter",
@@ -130,7 +124,7 @@ class NotaBeneCellTest(pytest.Item):
             raise NotaBeneTestError(
                 {
                     "phase": "invocation",
-                    "detail": f"nota-bene binary not found: {binary!r}. Ensure it is installed and on PATH.",
+                    "detail": "nota-bene binary not found. Ensure the 'nota-bene' package is installed.",
                     "traceback": "",
                 }
             ) from exc

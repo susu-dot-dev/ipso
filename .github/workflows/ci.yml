@@ -25,12 +25,6 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: nota-bene-binary
-          path: target/debug/nota-bene
-
   test-rs:
     runs-on: ubuntu-latest
     steps:
@@ -55,6 +49,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -77,19 +77,15 @@ jobs:
             nota-bene/htmlcov/
 
   test-pnb:
-    needs: [rust]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: nota-bene-binary
-          path: target/debug
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Mark binary executable
-        run: chmod +x target/debug/nota-bene
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -100,6 +96,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version-file: pytest-nota-bene/.python-version
+
+      - name: Install nota-bene (builds CLI from source)
+        run: uv pip install --system ./nota-bene/
 
       - name: Run tests
         run: make -C pytest-nota-bene test
@@ -116,6 +115,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

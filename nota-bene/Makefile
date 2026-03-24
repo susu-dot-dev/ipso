@@ -40,4 +40,4 @@ typing:
 all: lint format typing
 
 build:
-	uv build
+	uvx maturin build --release -o dist/
