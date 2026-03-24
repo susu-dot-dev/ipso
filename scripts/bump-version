@@ -62,6 +62,10 @@ bump_ipso() {
     echo "  Updated Cargo.toml"
     echo "  Updated ipso/pyproject.toml"
     echo "  Updated ipso/src/ipso/__about__.py"
+    echo "  Updating Cargo.lock"
+    cargo update --manifest-path "$REPO_ROOT/Cargo.toml" --package ipso || exit 1
+    echo "  Updating ipso/uv.lock"
+    uv lock --project "$REPO_ROOT/ipso" || exit 1
 }
 
 bump_pytest_ipso() {
@@ -70,6 +74,8 @@ bump_pytest_ipso() {
     sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/pytest-ipso/src/pytest_ipso/__about__.py"
     echo "  Updated pytest-ipso/pyproject.toml"
     echo "  Updated pytest-ipso/src/pytest_ipso/__about__.py"
+    echo "  Updating pytest-ipso/uv.lock"
+    uv lock --project "$REPO_ROOT/pytest-ipso" || exit 1
 }
 
 # --- Determine branch name ---
