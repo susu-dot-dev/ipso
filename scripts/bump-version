@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# Bump version, commit to a new branch, push it, and return to main.
+# You then create a PR, review, and merge. After merging, use
+# scripts/release to tag and trigger the publish workflow.
+#
+# Usage:
+#   scripts/bump-version <package> <version>
+#
+# Arguments:
+#   package   One of: nota-bene, pytest-nota-bene, all
+#   version   Semantic version without "v" prefix (e.g. 0.2.0)
+#
+# Examples:
+#   scripts/bump-version all 0.2.0
+#   scripts/bump-version nota-bene 0.2.0
+#   scripts/bump-version pytest-nota-bene 0.3.0
+
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+    echo "Usage: scripts/bump-version <package> <version>"
+    echo "  package: nota-bene | pytest-nota-bene | all"
+    echo "  version: e.g. 0.2.0"
+    exit 1
+fi
+
+package="$1"
+version="$2"
+
+# Strip leading "v" if present
+version="${version#v}"
+
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: version must be in semver format (e.g. 0.2.0), got: $version"
+    exit 1
+fi
+
+case "$package" in
+    nota-bene|pytest-nota-bene|all) ;;
+    *)
+        echo "Error: unknown package '$package'. Use: nota-bene | pytest-nota-bene | all"
+        exit 1
+        ;;
+esac
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Ensure working tree is clean
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Error: working tree is not clean. Commit or stash changes first."
+    exit 1
+fi
+
+# --- Version bump functions ---
+
+bump_nota_bene() {
+    echo "Bumping nota-bene to $version"
+    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/Cargo.toml"
+    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/nota-bene/pyproject.toml"
+    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/nota-bene/src/nota_bene/__about__.py"
+    echo "  Updated Cargo.toml"
+    echo "  Updated nota-bene/pyproject.toml"
+    echo "  Updated nota-bene/src/nota_bene/__about__.py"
+}
+
+bump_pytest_nota_bene() {
+    echo "Bumping pytest-nota-bene to $version"
+    sed -i "s/^version = \".*\"/version = \"$version\"/" "$REPO_ROOT/pytest-nota-bene/pyproject.toml"
+    sed -i "s/__version__ = \".*\"/__version__ = \"$version\"/" "$REPO_ROOT/pytest-nota-bene/src/pytest_nota_bene/__about__.py"
+    echo "  Updated pytest-nota-bene/pyproject.toml"
+    echo "  Updated pytest-nota-bene/src/pytest_nota_bene/__about__.py"
+}
+
+# --- Determine branch name ---
+
+if [ "$package" = "all" ]; then
+    branch_name="release/v${version}"
+else
+    branch_name="${package}/v${version}"
+fi
+
+# --- Create branch, bump, commit, push, return to main ---
+
+echo "==> Creating branch: $branch_name"
+git checkout -b "$branch_name" || exit 1
+
+case "$package" in
+    nota-bene)       bump_nota_bene ;;
+    pytest-nota-bene) bump_pytest_nota_bene ;;
+    all)             bump_nota_bene; bump_pytest_nota_bene ;;
+esac
+
+echo ""
+echo "==> Committing version bump"
+git add -A || exit 1
+git commit -m "bump: ${package} v${version}" || exit 1
+
+echo "==> Pushing branch to origin"
+git push -u origin "$branch_name" || exit 1
+
+echo "==> Returning to main"
+git checkout main || exit 1
+
+echo ""
+echo "Done! Branch '$branch_name' has been pushed."
+echo "Next steps:"
+echo "  1. Create a PR from '$branch_name' into main"
+echo "  2. Merge the PR"
+echo "  3. Run: scripts/release $package"

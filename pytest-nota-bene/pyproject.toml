@@ -5,10 +5,13 @@ description = "pytest plugin for running nota-bene notebook cell tests"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
-dependencies = [
-    "pytest",
-    "nota-bene",
-]
+
+dependencies = ["pytest", "nota-bene"]
+
+[project.urls]
+Homepage = "https://susu.dev/nota-bene"
+Repository = "https://github.com/susu-dot-dev/nota-bene"
+Issues = "https://github.com/susu-dot-dev/nota-bene/issues"
 
 [project.entry-points."pytest11"]
 nota-bene = "pytest_nota_bene.plugin"

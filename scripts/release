@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# Tag and push a release from main. Run this after merging the version
+# bump PR created by scripts/bump-version.
+#
+# This reads the current version from the package files, creates the
+# appropriate prefixed tag(s), and pushes them to trigger the publish
+# workflow(s).
+#
+# Usage:
+#   scripts/release <package>
+#
+# Arguments:
+#   package   One of: nota-bene, pytest-nota-bene, all
+#
+# Examples:
+#   scripts/release nota-bene
+#   scripts/release pytest-nota-bene
+#   scripts/release all
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+    echo "Usage: scripts/release <package>"
+    echo "  package: nota-bene | pytest-nota-bene | all"
+    exit 1
+fi
+
+package="$1"
+
+case "$package" in
+    nota-bene|pytest-nota-bene|all) ;;
+    *)
+        echo "Error: unknown package '$package'. Use: nota-bene | pytest-nota-bene | all"
+        exit 1
+        ;;
+esac
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# --- Ensure we are on main ---
+
+current_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$current_branch" != "main" ]; then
+    echo "Error: must be on main branch (currently on '$current_branch')"
+    exit 1
+fi
+
+# --- Ensure working tree is clean ---
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Error: working tree is not clean. Commit or stash changes first."
+    exit 1
+fi
+
+# --- Pull latest ---
+
+echo "==> Pulling latest main"
+git pull || exit 1
+
+# --- Read versions from package files ---
+
+get_nb_version() {
+    grep -m1 '^version' "$REPO_ROOT/Cargo.toml" | sed 's/version = "\(.*\)"/\1/'
+}
+
+get_pnb_version() {
+    grep -m1 '^version' "$REPO_ROOT/pytest-nota-bene/pyproject.toml" | sed 's/version = "\(.*\)"/\1/'
+}
+
+# --- Build tag list ---
+
+tags=()
+
+case "$package" in
+    nota-bene)
+        nb_version="$(get_nb_version)"
+        tags+=("nota-bene/v${nb_version}")
+        echo "nota-bene version: $nb_version"
+        ;;
+    pytest-nota-bene)
+        pnb_version="$(get_pnb_version)"
+        tags+=("pytest-nota-bene/v${pnb_version}")
+        echo "pytest-nota-bene version: $pnb_version"
+        ;;
+    all)
+        nb_version="$(get_nb_version)"
+        pnb_version="$(get_pnb_version)"
+        tags+=("nota-bene/v${nb_version}")
+        tags+=("pytest-nota-bene/v${pnb_version}")
+        echo "nota-bene version: $nb_version"
+        echo "pytest-nota-bene version: $pnb_version"
+        ;;
+esac
+
+echo ""
+echo "Tags to create:"
+for tag in "${tags[@]}"; do
+    echo "  $tag"
+done
+echo ""
+
+# --- Confirm ---
+
+read -rp "Proceed? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+# --- Create and push tags ---
+
+for tag in "${tags[@]}"; do
+    echo "==> Tagging: $tag"
+    git tag "$tag" || exit 1
+    git push origin "refs/tags/$tag" || exit 1
+done
+
+echo ""
+echo "Release complete! Tags pushed:"
+for tag in "${tags[@]}"; do
+    echo "  $tag"
+done
+echo ""
+echo "The publish workflow(s) should now be triggered on GitHub Actions."
