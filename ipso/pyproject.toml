@@ -2,7 +2,7 @@
 name = "ipso"
 version = "0.1.1"
 description = "Notebook testing with fixtures, patches, and AI-generated tests"
-readme = "../README.md"
+readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = ["nbclient>=0.7", "ipykernel"]
@@ -32,6 +32,7 @@ python-source = "src"
 module-name = "ipso"
 python-packages = ["ipso"]
 exclude = ["**/__pycache__/**"]
+
 
 [dependency-groups]
 dev = ["pytest", "pytest-cov>=4.1.0"]
