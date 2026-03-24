@@ -15,10 +15,6 @@ use crate::diagnostics::{compute_cell_diagnostics, CellStatus};
 use crate::metadata::{Fixture, TestMeta};
 use crate::notebook::CellExt;
 
-// ---------------------------------------------------------------------------
-// Output types
-// ---------------------------------------------------------------------------
-
 /// JSON representation of a single code cell (view output).
 ///
 /// Fields match the spec's "Cell object" schema.  `shas` is intentionally
@@ -81,10 +77,6 @@ impl CellView {
 pub fn parse_fields(s: &str) -> Vec<String> {
     s.split(',').map(|f| f.trim().to_string()).collect()
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

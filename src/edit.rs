@@ -7,10 +7,6 @@ use crate::metadata::{Fixture, IpsoData};
 use crate::notebook::{blank_cell_metadata, new_cell_id, CellExt};
 use crate::shas::{cell_state, compute_snapshot, CellState};
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
 /// Convert a source notebook into a test-editor notebook.
 ///
 /// `source_path` is stored in the editor notebook metadata so `--continue` can
@@ -103,10 +99,6 @@ pub fn build_editor_notebook(source: &Notebook, source_path: &str) -> Result<Not
 
     Ok(nb)
 }
-
-// ---------------------------------------------------------------------------
-// Cell constructors
-// ---------------------------------------------------------------------------
 
 const GUIDE_FIXTURES: &str = "### Fixture setup\n\nThe following **code** cells run before the patched notebook cell when tests execute. They prepare variables, mocks, or files that cell needs.\n";
 
@@ -330,10 +322,6 @@ fn make_test_cell(cell_id: &str, test_name: &str, test_source: &str) -> Cell {
         outputs: vec![],
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helper: split source string into Vec<String> lines
-// ---------------------------------------------------------------------------
 
 pub fn split_source(s: &str) -> Vec<String> {
     if s.is_empty() {

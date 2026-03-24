@@ -44,10 +44,6 @@ pub fn reconstruct_original(patched: &str, diff: &str) -> Result<String> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal: reverse a unified diff string
-// ---------------------------------------------------------------------------
-
 fn reverse_patch_str(patch: &str) -> String {
     let lines: Vec<&str> = patch.lines().collect();
     let mut out = Vec::new();

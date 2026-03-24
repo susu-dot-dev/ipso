@@ -4,10 +4,6 @@ use crate::diff_utils::apply_diff;
 use crate::notebook::CellExt;
 use crate::shas::{cell_state, CellState};
 
-// ---------------------------------------------------------------------------
-// Diagnostic types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticType {
@@ -56,10 +52,6 @@ pub struct CellStatus {
     pub valid: bool,
     pub diagnostics: Vec<Diagnostic>,
 }
-
-// ---------------------------------------------------------------------------
-// compute_own_diagnostics / compute_state_diagnostics / compute_cell_diagnostics
-// ---------------------------------------------------------------------------
 
 /// Compute diagnostics that depend only on the cell's own content.
 ///

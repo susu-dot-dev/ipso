@@ -21,6 +21,7 @@ uuid = { version = "1", features = ["v4"] }
 jsonc-parser = "0.29"
 tower-lsp = "0.20"
 lru = "0.12"
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"
