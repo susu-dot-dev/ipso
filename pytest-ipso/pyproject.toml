@@ -7,6 +7,15 @@ license = { text = "MIT" }
 requires-python = ">=3.12"
 
 dependencies = ["pytest", "ipso"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Testing",
+  "Framework :: Pytest",
+  "Operating System :: OS Independent",
+]
 
 [project.urls]
 Homepage = "https://susu.dev/ipso"
