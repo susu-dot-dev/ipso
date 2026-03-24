@@ -572,6 +572,89 @@ pub fn executor_error_result(cell_id: &str, test_name: &str, detail: &str) -> Ce
 }
 
 // ---------------------------------------------------------------------------
+// Executor subprocess
+// ---------------------------------------------------------------------------
+
+/// Spawn the Python executor subprocess, pipe `test_nb_json` to its stdin,
+/// and return the parsed test result.  This is a synchronous blocking call;
+/// wrap it in `tokio::task::spawn_blocking` when calling from async contexts.
+pub fn run_executor_subprocess(
+    python: &str,
+    timeout_str: &str,
+    test_nb_json: &str,
+    cell_id: &str,
+    test_name: &str,
+) -> CellTestResult {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = match Command::new(python)
+        .args(["-m", "nota_bene._executor", timeout_str])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to spawn executor: {e}"),
+            );
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(test_nb_json.as_bytes()) {
+            return executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to write to executor stdin: {e}"),
+            );
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            return executor_error_result(
+                cell_id,
+                test_name,
+                &format!("Failed to wait for executor: {e}"),
+            );
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        let detail = if let Some(msg) = stderr.strip_prefix("__NB_EXEC_ERROR__") {
+            format!("Executor error: {}", msg.trim())
+        } else if !stderr.is_empty() {
+            format!(
+                "Executor failed ({}). stderr: {}",
+                output.status,
+                stderr.trim()
+            )
+        } else {
+            format!("Executor failed ({})", output.status)
+        };
+        return executor_error_result(cell_id, test_name, &detail);
+    }
+
+    match parse_executed_notebook(&stdout) {
+        Ok(executed_nb) => extract_results(&executed_nb, cell_id, test_name),
+        Err(e) => executor_error_result(
+            cell_id,
+            test_name,
+            &format!("Failed to parse executed notebook: {e}"),
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
