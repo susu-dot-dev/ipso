@@ -2196,6 +2196,12 @@ fn test_pass_implicit_subtest_passed() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
     let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
     let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("completed"),
+        "expected status=completed but got: {}",
+        serde_json::to_string_pretty(&results[0]).unwrap()
+    );
     let subtests = results[0]["subtests"].as_array().unwrap();
     assert_eq!(subtests.len(), 1);
     assert_eq!(subtests[0]["passed"].as_bool(), Some(true));
@@ -2256,6 +2262,12 @@ fn test_fail_assertion_subtest_not_passed() {
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
     let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
     let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("completed"),
+        "expected status=completed but got: {}",
+        serde_json::to_string_pretty(&results[0]).unwrap()
+    );
     let subtests = results[0]["subtests"].as_array().unwrap();
     assert_eq!(subtests.len(), 1);
     assert_eq!(subtests[0]["passed"].as_bool(), Some(false));
@@ -2308,6 +2320,12 @@ fn test_subtests_both_reported() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
     let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
     let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("completed"),
+        "expected status=completed but got: {}",
+        serde_json::to_string_pretty(&results[0]).unwrap()
+    );
     let subtests = results[0]["subtests"].as_array().unwrap();
     assert_eq!(subtests.len(), 2, "both subtests must be reported");
 }
@@ -2317,6 +2335,12 @@ fn test_subtests_first_passes_second_fails() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
     let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
     let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("completed"),
+        "expected status=completed but got: {}",
+        serde_json::to_string_pretty(&results[0]).unwrap()
+    );
     let subtests = results[0]["subtests"].as_array().unwrap();
     assert_eq!(
         subtests[0]["passed"].as_bool(),
@@ -2335,6 +2359,12 @@ fn test_subtests_names_preserved() {
     let nb = common::fixtures_dir().join("test-subtests.ipynb");
     let (stdout, _stderr, _status) = run_nota_bene_test(&nb, &[]);
     let results = parse_test_results(&stdout);
+    assert_eq!(
+        results[0]["status"].as_str(),
+        Some("completed"),
+        "expected status=completed but got: {}",
+        serde_json::to_string_pretty(&results[0]).unwrap()
+    );
     let subtests = results[0]["subtests"].as_array().unwrap();
     assert_eq!(subtests[0]["name"].as_str(), Some("correct result"));
     assert_eq!(subtests[1]["name"].as_str(), Some("wrong assertion"));
