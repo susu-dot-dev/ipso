@@ -7,37 +7,111 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: nota-bene
+permissions:
+  contents: read
 
+jobs:
+  build-wheels:
+    name: Build wheel (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version-file: nota-bene/.python-version
 
-      - name: Build wheel and sdist
-        run: make build
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release -o dist/ --find-interpreter
+          working-directory: nota-bene
 
-      - name: Upload dist artifacts
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: nota-bene/dist/
+          name: wheel-${{ matrix.target }}
+          path: nota-bene/dist/*.whl
+
+  build-sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: -o dist/
+          working-directory: nota-bene
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: nota-bene/dist/*.tar.gz
+
+  e2e-wheel:
+    name: E2E wheel test (${{ matrix.target }})
+    needs: [build-wheels]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: nota-bene/.python-version
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/
+
+      - name: Run e2e test (Unix)
+        if: runner.os != 'Windows'
+        run: bash tests/test_wheel_e2e.sh dist/*.whl
+
+      - name: Run e2e test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          python -m venv test-venv
+          test-venv\Scripts\Activate.ps1
+          pip install $wheel
+          nota-bene --help
+          python -c "import nota_bene; print(nota_bene.__version__)"
+          deactivate
 
   publish:
-    needs: build
+    needs: [build-wheels, build-sdist, e2e-wheel]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi
@@ -45,11 +119,11 @@ jobs:
       id-token: write
 
     steps:
-      - name: Download dist artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist
           path: dist/
+          merge-multiple: true
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

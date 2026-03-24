@@ -1,4 +1,4 @@
-.PHONY: help build clean lint test test-setup clean-venv
+.PHONY: help build clean lint test test-setup clean-venv test-wheel
 
 VENV   := tests/.venv
 PYTHON := $(VENV)/bin/python
@@ -9,14 +9,15 @@ PIP    := $(VENV)/bin/pip
 help:
 	@echo "nota-bene Makefile targets:"
 	@echo ""
-	@echo "  make build      Build debug CLI (target/debug/nota-bene)"
-	@echo "  make clean      Remove target/"
-	@echo "  make lint       cargo fmt check + clippy"
-	@echo "  make test       Run Rust integration tests"
+	@echo "  make build        Build debug CLI (target/debug/nota-bene)"
+	@echo "  make clean        Remove target/"
+	@echo "  make lint         cargo fmt check + clippy"
+	@echo "  make test         Run Rust integration tests"
+	@echo "  make test-wheel   E2E: build wheel, install in fresh venv, verify CLI"
 	@echo ""
 	@echo "  Python packages: run 'make <target>' inside nota-bene/ or pytest-nota-bene/"
 	@echo ""
-	@echo "  make help       Show this help"
+	@echo "  make help         Show this help"
 
 # ---- Rust integration test environment -------------------------------------
 
@@ -30,7 +31,15 @@ test: test-setup
 	cargo test
 
 clean-venv:
-	rm -rf $(VENV)
+	rm -rf $(VENV) $(WHEEL_VENV)
+
+# ---- E2E wheel test -------------------------------------------------------
+
+test-wheel:
+	@echo "==> Building wheel with maturin..."
+	cd nota-bene && uvx maturin build --release -o ../target/wheels/
+	@echo "==> Running e2e test..."
+	bash tests/test_wheel_e2e.sh $$(ls target/wheels/nota_bene-*.whl | head -1)
 
 # ---- Rust build / lint -----------------------------------------------------
 

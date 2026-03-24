@@ -2,27 +2,11 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "tests" / "fixtures"
-
-# The nota-bene binary: prefer the local build, fall back to PATH.
-_LOCAL_BINARY = Path(__file__).parent.parent.parent / "target" / "debug" / "nota-bene"
-
-
-def _nb_binary() -> str | None:
-    if _LOCAL_BINARY.exists():
-        return str(_LOCAL_BINARY)
-    found = shutil.which("nota-bene")
-    return found
-
-
-NB_BINARY = _nb_binary()
-
-needs_nb = pytest.mark.skipif(NB_BINARY is None, reason="nota-bene binary not found")
 
 
 # ---------------------------------------------------------------------------
@@ -35,12 +19,6 @@ def copy_fixture(pytester: pytest.Pytester, name: str) -> Path:
     dest = pytester.path / name
     dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     return dest
-
-
-def nb_args() -> list[str]:
-    """Common args to pass nota-bene binary location."""
-    assert NB_BINARY is not None
-    return [f"--nb-binary={NB_BINARY}"]
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +58,10 @@ def test_regular():
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_passing_test(pytester: pytest.Pytester) -> None:
     """A passing test reports PASSED and exits 0."""
     copy_fixture(pytester, "test-pass.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*total is 60*PASSED*"])
     assert result.ret == 0
 
@@ -94,11 +71,10 @@ def test_passing_test(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_assertion_failure(pytester: pytest.Pytester) -> None:
     """A failing subtest reports FAILED and exits 1."""
     copy_fixture(pytester, "test-fail-assertion.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*test-fail-assertion.ipynb::x equals 1*FAILED*"])
     assert result.ret == 1
 
@@ -108,11 +84,10 @@ def test_assertion_failure(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_multiple_subtests_appear_in_output(pytester: pytest.Pytester) -> None:
     """All subtests appear in output regardless of individual pass/fail."""
     copy_fixture(pytester, "test-subtests.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*multiplication result*FAILED*"])
     # The failure report should mention both subtests
     result.stdout.fnmatch_lines(["*correct result*"])
@@ -125,11 +100,10 @@ def test_multiple_subtests_appear_in_output(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_fixture_error(pytester: pytest.Pytester) -> None:
     """A fixture that raises is reported as an infrastructure error."""
     copy_fixture(pytester, "test-fixture-error.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*should not reach test*FAILED*"])
     # Should mention fixture phase
     result.stdout.fnmatch_lines(["*fixture*"])
@@ -141,11 +115,10 @@ def test_fixture_error(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_multi_cell_chain(pytester: pytest.Pytester) -> None:
     """A test cell that depends on preceding cells' state works correctly."""
     copy_fixture(pytester, "test-multi-cell.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*a equals 10*PASSED*"])
     result.stdout.fnmatch_lines(["*b equals 20*PASSED*"])
     assert result.ret == 0
@@ -156,11 +129,10 @@ def test_multi_cell_chain(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_diff_applied(pytester: pytest.Pytester) -> None:
     """A cell with nota-bene.diff applies the patch before execution."""
     copy_fixture(pytester, "test-with-diff.ipynb")
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*diff is applied*PASSED*"])
     assert result.ret == 0
 
@@ -170,7 +142,6 @@ def test_diff_applied(pytester: pytest.Pytester) -> None:
 # ---------------------------------------------------------------------------
 
 
-@needs_nb
 def test_no_interference_execution(pytester: pytest.Pytester) -> None:
     """Regular .py test files still pass when the plugin is active."""
     pytester.makepyfile(
@@ -179,20 +150,6 @@ def test_regular():
     assert 1 + 1 == 2
 """
     )
-    result = pytester.runpytest("-v", *nb_args())
+    result = pytester.runpytest("-v")
     result.stdout.fnmatch_lines(["*test_plain.py::test_regular*PASSED*"])
     assert result.ret == 0
-
-
-# ---------------------------------------------------------------------------
-# 9. Binary not found
-# ---------------------------------------------------------------------------
-
-
-def test_binary_not_found(pytester: pytest.Pytester) -> None:
-    """Graceful error when nota-bene binary is not on PATH."""
-    copy_fixture(pytester, "test-pass.ipynb")
-    result = pytester.runpytest("-v", "--nb-binary=nota-bene-nonexistent-xyz")
-    result.stdout.fnmatch_lines(["*FAILED*"])
-    result.stdout.fnmatch_lines(["*nota-bene-nonexistent-xyz*"])
-    assert result.ret != 0
