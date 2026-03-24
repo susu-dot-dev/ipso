@@ -80,6 +80,30 @@ else
     branch_name="${package}/v${version}"
 fi
 
+# --- Remove stale release branch (local + origin) if it already exists ---
+
+cleanup_existing_branch() {
+    local bn="$1"
+    git fetch origin --prune || exit 1
+
+    if [ -n "$(git ls-remote --heads origin "$bn" 2>/dev/null)" ]; then
+        echo "==> Deleting existing remote branch: origin/$bn"
+        git push origin --delete "$bn" || exit 1
+    fi
+
+    if git show-ref --verify --quiet "refs/heads/$bn"; then
+        echo "==> Deleting existing local branch: $bn"
+        local current
+        current="$(git rev-parse --abbrev-ref HEAD)"
+        if [ "$current" = "$bn" ]; then
+            git checkout main || exit 1
+        fi
+        git branch -D "$bn" || exit 1
+    fi
+}
+
+cleanup_existing_branch "$branch_name"
+
 # --- Create branch, bump, commit, push, return to main ---
 
 echo "==> Creating branch: $branch_name"
