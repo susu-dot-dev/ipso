@@ -7,6 +7,11 @@ license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = ["nbclient>=0.7", "ipykernel"]
 
+[project.urls]
+Homepage = "https://susu.dev/nota-bene"
+Repository = "https://github.com/susu-dot-dev/nota-bene"
+Issues = "https://github.com/susu-dot-dev/nota-bene/issues"
+
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"

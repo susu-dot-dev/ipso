@@ -3,7 +3,7 @@ name = "nota-bene"
 version = "0.1.0"
 edition = "2021"
 description = "Notebook testing with fixtures, patches, and AI-generated tests"
-license = "Apache-2.0 OR MIT"
+license = "MIT"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
