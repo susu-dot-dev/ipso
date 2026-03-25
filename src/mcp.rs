@@ -295,6 +295,19 @@ async fn do_repair(params: &RepairIpsoParams) -> anyhow::Result<String> {
     ));
     out.push_str("> ```\n\n");
 
+    // Failure triage rule — stated before any diagnostic sections.
+    out.push_str(
+        "> **When tests fail — triage first, then fix the right thing:**\n\
+         > - **Source cell has a bug** → fix the bug directly in the source cell \
+         (edit the notebook cell source). Do NOT use the diff to work around source bugs.\n\
+         > - **Source cell behavior has intentionally changed** → update the test to \
+         reflect the new intended behavior. Do not blindly assert the exact new output; \
+         assert what the behavior *should* be.\n\
+         > - **Test itself has a bug** → fix the test source in `ipso update`.\n\
+         > - **The diff is only for rerouting calls to fixtures** (e.g. swapping a real \
+         file path for a temp file). Never use the diff to fix logic bugs in the source.\n\n",
+    );
+
     // Cell source.
     out.push_str("## Cell source\n\n```python\n");
     out.push_str(&source);
@@ -630,8 +643,8 @@ fn append_missing(
     if is_brief {
         out.push_str(
             "Create the missing fields. Fixtures are needed only if the cell has \
-             external resources or side effects. A diff is needed only to reroute \
-             the cell to use fixtures.\n\n",
+             external resources or side effects. A diff is needed only to make \
+             the cell compatible with the ipso fixture-based environment.\n\n",
         );
         append_update_command_template(out, notebook_path, cell_id);
         out.push_str("\nThen run the test to confirm it passes:\n\n");
@@ -665,11 +678,16 @@ fn append_missing(
         if !has_diff {
             out.push_str("### Diff\n\n");
             out.push_str(
-                "A minimal patch that reroutes the cell to use fixtures instead of real \
-                 resources. For example, replacing a CSV file path with a temp file created \
-                 by the fixture. The diff should change as little as possible — the goal is \
-                 to test the user's actual code, not rewritten code. A diff is NOT needed if \
-                 the cell doesn't reference any external resources that fixtures replace.\n\n\
+                "A minimal patch that makes the cell compatible with the ipso \
+                 fixture-based environment. The diff should change as little as possible \
+                 — the goal is to test the user's actual logic, not rewritten code.\n\n\
+                 **The diff is NOT for fixing bugs in the source cell.** If the source cell \
+                 has a bug, fix it directly in the notebook cell source. The diff is only \
+                 ever for adapting the cell to run under ipso (e.g. using fixture-provided \
+                 resources instead of real ones, or removing environment-specific \
+                 incompatibilities).\n\n\
+                 A diff is NOT needed if the cell already runs correctly in the ipso \
+                 environment without modification.\n\n\
                  Do NOT write a unified diff by hand. Instead:\n\
                  1. Produce the full patched cell source with your intended changes\n\
                  2. Call `generate_diff` with that patched source to get the correct diff\n\
@@ -717,8 +735,10 @@ fn append_needs_review(
             append_accept_command(out, notebook_path, cell_id);
         } else {
             out.push_str(
-                "Test failing. Update fixtures/diff/test, re-run the test, then accept \
-                 once passing.\n\n",
+                "Test failing. Triage first: fix the source cell if it has a bug, update \
+                 the test if the cell behavior has intentionally changed (assert intended \
+                 behavior, not exact output), or fix the test if it has a bug. Then \
+                 re-run the test and accept once passing.\n\n",
             );
             append_update_command_existing(out, notebook_path, cell_id);
             append_test_command(out, notebook_path, cell_id);
@@ -735,7 +755,7 @@ fn append_needs_review(
              current cell source.\n\n\
              Remember:\n\
              - Fixtures provide deterministic mock data (KB not GB)\n\
-             - The diff should be minimal — only reroute to use fixtures\n\
+             - The diff should be minimal — only what's needed to make the cell compatible with the ipso environment\n\
              - Tests should cover the specific behaviors of THIS cell\n\n",
         );
 
@@ -754,7 +774,13 @@ fn append_needs_review(
             append_accept_command(out, notebook_path, cell_id);
         } else {
             out.push_str(
-                "The test is failing. Update the metadata as needed, re-run the test \
+                "The test is failing. Triage the failure before making changes:\n\
+                 - If the source cell has a bug, fix it directly in the notebook cell source.\n\
+                 - If the source cell behavior has intentionally changed, update the test to \
+                 reflect the new intended behavior — assert what the behavior *should* be, \
+                 not just whatever the cell now happens to output.\n\
+                 - If the test itself has a bug, fix the test source.\n\n\
+                 Update the metadata as needed, re-run the test \
                  to confirm it passes, then accept:\n\n",
             );
             append_update_command_existing(out, notebook_path, cell_id);
@@ -785,13 +811,20 @@ fn append_ancestor_modified(
         if test_passed {
             out.push_str(
                 "Test passes. If the ancestor changes don't affect this cell, accept. \
-                 If you make any changes, re-run the test before accepting.\n\n",
+                 If you make any changes, re-run the test before accepting.\n\n\
+                 To bulk-accept all cells flagged only for ancestor_modified:\n\n",
             );
+            out.push_str(&format!(
+                "```bash\nipso accept {} --filter \"diagnostics.type:ancestor_modified\"\n```\n\n",
+                notebook_path
+            ));
             append_test_command(out, notebook_path, cell_id);
             append_accept_command(out, notebook_path, cell_id);
         } else {
             out.push_str(
-                "Test failing. Update metadata to account for upstream changes, \
+                "Test failing. Triage first: fix the source cell if it has a bug, update \
+                 the test if behavior has intentionally changed (assert intended behavior, \
+                 not exact output), or fix the test if it has a bug. Update metadata, \
                  re-run the test, then accept once passing.\n\n",
             );
             append_update_command_existing(out, notebook_path, cell_id);
@@ -803,8 +836,24 @@ fn append_ancestor_modified(
         out.push_str(
             "Preceding cells have changed, which may affect this cell's execution \
              context. The fixtures and diff may need updating if the upstream data \
-             shape or control flow changed.\n\n",
+             shape or control flow changed.\n\n\
+             **If the upstream change is trivial and you are confident none of the \
+             affected cells need updating**, you can bulk-accept all cells that only \
+             have this diagnostic in one command:\n\n",
         );
+        out.push_str(&format!(
+            "```bash\nipso accept {} --filter \"diagnostics.type:ancestor_modified\"\n```\n\n",
+            notebook_path
+        ));
+        out.push_str(
+            "To accept only cells up to a given notebook position (0-based, inclusive), \
+             combine with an index filter. For example, to accept all ancestor-modified \
+             cells from position 0 through 7:\n\n",
+        );
+        out.push_str(&format!(
+            "```bash\nipso accept {} --filter \"diagnostics.type:ancestor_modified\" --filter \"index:..7\"\n```\n\n",
+            notebook_path
+        ));
         if test_passed {
             out.push_str(
                 "The test still passes despite ancestor changes. If the upstream changes \
@@ -820,9 +869,14 @@ fn append_ancestor_modified(
             append_accept_command(out, notebook_path, cell_id);
         } else {
             out.push_str(
-                "The test is failing, likely due to changes in preceding cells. Update \
-                 the fixtures or test to account for the new upstream state, re-run the \
-                 test to confirm it passes, then accept:\n\n",
+                "The test is failing, likely due to changes in preceding cells. Triage \
+                 the failure before making changes:\n\
+                 - If an upstream change exposed a bug in this cell, fix the source cell directly.\n\
+                 - If the upstream change altered the data shape or behavior this cell relies on, \
+                 update the fixtures or test to reflect the new intended behavior — assert what \
+                 the behavior *should* be, not just whatever the cell now happens to output.\n\
+                 - If the test itself has a bug, fix the test source.\n\n\
+                 Update the metadata, re-run the test to confirm it passes, then accept:\n\n",
             );
             append_update_command_existing(out, notebook_path, cell_id);
             append_test_command(out, notebook_path, cell_id);
@@ -853,9 +907,9 @@ fn append_diff_conflict(
     } else {
         out.push_str(
             "The cell source has changed and the stored diff can no longer be applied. \
-             The diff's only purpose is to reroute code to use fixture-provided \
-             resources (e.g., swap a file path, redirect an API call to a mock). \
-             It should change as little as possible.\n\n\
+              The diff's only purpose is to make the cell compatible with the ipso \
+              fixture-based environment — it should change as little as possible and \
+              must not be used to fix logic bugs in the source.\n\n\
              Do NOT write a unified diff by hand. Instead:\n\
              1. Produce the full patched cell source with your intended changes\n\
              2. Call `generate_diff` to compute the correct unified diff\n\

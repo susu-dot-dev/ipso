@@ -33,16 +33,29 @@ impl Filter {
     /// Returns `true` if `cell` (at `index` in `nb`) matches this filter.
     ///
     /// Multiple values inside the filter are OR-ed.
-    pub fn matches(&self, nb: &Notebook, cell: &Cell, index: usize) -> bool {
-        self.values
-            .iter()
-            .any(|v| self.key.matches(nb, cell, index, v))
+    pub fn matches(&self, nb: &Notebook, cell: &Cell, index: usize) -> Result<bool> {
+        for v in &self.values {
+            if self.key.matches(nb, cell, index, v)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
 /// Apply a slice of filters (AND semantics) to one cell.
-pub fn cell_matches_all(filters: &[Filter], nb: &Notebook, cell: &Cell, index: usize) -> bool {
-    filters.iter().all(|f| f.matches(nb, cell, index))
+pub fn cell_matches_all(
+    filters: &[Filter],
+    nb: &Notebook,
+    cell: &Cell,
+    index: usize,
+) -> Result<bool> {
+    for f in filters {
+        if !f.matches(nb, cell, index)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[derive(Debug, Clone)]
@@ -81,11 +94,11 @@ impl FilterKey {
     }
 
     /// Whether `cell` satisfies `key = value` for this key variant.
-    fn matches(&self, nb: &Notebook, cell: &Cell, index: usize, value: &str) -> bool {
+    fn matches(&self, nb: &Notebook, cell: &Cell, index: usize, value: &str) -> Result<bool> {
         match self {
-            FilterKey::Cell => cell.cell_id_str() == value,
+            FilterKey::Cell => Ok(cell.cell_id_str() == value),
 
-            FilterKey::Index => match_index(index, value),
+            FilterKey::Index => Ok(match_index(index, value)),
 
             FilterKey::Test => {
                 let has_test = cell.ipso().and_then(|d| d.test).is_some();
@@ -109,41 +122,44 @@ impl FilterKey {
             FilterKey::StatusValid => {
                 let status = compute_cell_diagnostics(nb, index);
                 let valid_str = if status.valid { "true" } else { "false" };
-                valid_str == value
+                match value {
+                    "true" | "false" => Ok(valid_str == value),
+                    other => bail!("status.valid expects 'true' or 'false', got: {other:?}"),
+                }
             }
 
             FilterKey::DiagnosticsType => {
                 let status = compute_cell_diagnostics(nb, index);
                 // value is a single type string (comma-split already happened in Filter::parse)
-                status.diagnostics.iter().any(|d| {
+                Ok(status.diagnostics.iter().any(|d| {
                     let type_str = serde_json::to_value(&d.r#type)
                         .ok()
                         .and_then(|v| v.as_str().map(|s| s.to_string()))
                         .unwrap_or_default();
                     type_str == value
-                })
+                }))
             }
 
             FilterKey::DiagnosticsSeverity => {
                 let status = compute_cell_diagnostics(nb, index);
-                status.diagnostics.iter().any(|d| {
+                Ok(status.diagnostics.iter().any(|d| {
                     let sev_str = serde_json::to_value(&d.severity)
                         .ok()
                         .and_then(|v| v.as_str().map(|s| s.to_string()))
                         .unwrap_or_default();
                     sev_str == value
-                })
+                }))
             }
         }
     }
 }
 
 /// Match `"null"` / `"not null"` against a has-value boolean.
-fn match_null_or_not(has_value: bool, expr: &str) -> bool {
+fn match_null_or_not(has_value: bool, expr: &str) -> Result<bool> {
     match expr {
-        "null" => !has_value,
-        "not null" => has_value,
-        _ => false,
+        "null" => Ok(!has_value),
+        "not null" => Ok(has_value),
+        other => bail!("expected 'null' or 'not null', got: {other:?}"),
     }
 }
 
@@ -287,7 +303,7 @@ mod tests {
         let cell = plain_cell("my-id", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("cell:my-id").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -295,7 +311,7 @@ mod tests {
         let cell = plain_cell("my-id", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("cell:other-id").unwrap();
-        assert!(!f.matches(&nb, &cell, 0));
+        assert!(!f.matches(&nb, &cell, 0).unwrap());
     }
 
     // --- FilterKey::Test ---
@@ -305,7 +321,7 @@ mod tests {
         let cell = plain_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("test:null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -317,7 +333,7 @@ mod tests {
         );
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("test:not null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     // --- FilterKey::StatusValid ---
@@ -329,7 +345,7 @@ mod tests {
         let cell = sha_accepted_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("status.valid:true").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -337,7 +353,15 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({}));
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("status.valid:false").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
+    }
+
+    #[test]
+    fn filter_status_valid_bad_value_errors() {
+        let cell = plain_cell("c1", "x = 1");
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("status.valid:yes").unwrap();
+        assert!(f.matches(&nb, &cell, 0).is_err());
     }
 
     // --- cell_matches_all (AND semantics) ---
@@ -346,7 +370,7 @@ mod tests {
     fn cell_matches_all_with_no_filters_is_true() {
         let cell = plain_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
-        assert!(cell_matches_all(&[], &nb, &cell, 0));
+        assert!(cell_matches_all(&[], &nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -356,7 +380,7 @@ mod tests {
         let f1 = Filter::parse("cell:c1").unwrap();
         let f2 = Filter::parse("test:null").unwrap();
         // Both match
-        assert!(cell_matches_all(&[f1, f2], &nb, &cell, 0));
+        assert!(cell_matches_all(&[f1, f2], &nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -365,7 +389,7 @@ mod tests {
         let nb = notebook(vec![cell.clone()]);
         let f1 = Filter::parse("cell:c1").unwrap();
         let f2 = Filter::parse("cell:other").unwrap();
-        assert!(!cell_matches_all(&[f1, f2], &nb, &cell, 0));
+        assert!(!cell_matches_all(&[f1, f2], &nb, &cell, 0).unwrap());
     }
 
     // --- FilterKey::Diff ---
@@ -375,7 +399,7 @@ mod tests {
         let cell = plain_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diff:null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -383,7 +407,7 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({"diff": "some diff"}));
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diff:not null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -391,7 +415,15 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({"diff": "some diff"}));
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diff:null").unwrap();
-        assert!(!f.matches(&nb, &cell, 0));
+        assert!(!f.matches(&nb, &cell, 0).unwrap());
+    }
+
+    #[test]
+    fn filter_diff_bad_value_errors() {
+        let cell = plain_cell("c1", "x = 1");
+        let nb = notebook(vec![cell.clone()]);
+        let f = Filter::parse("diff:not_null").unwrap();
+        assert!(f.matches(&nb, &cell, 0).is_err());
     }
 
     // --- FilterKey::Fixtures ---
@@ -401,7 +433,7 @@ mod tests {
         let cell = plain_cell("c1", "x = 1");
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("fixtures:null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -413,7 +445,7 @@ mod tests {
         );
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("fixtures:not null").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -422,7 +454,7 @@ mod tests {
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("fixtures:null").unwrap();
         assert!(
-            f.matches(&nb, &cell, 0),
+            f.matches(&nb, &cell, 0).unwrap(),
             "empty fixture map should count as null"
         );
     }
@@ -439,7 +471,7 @@ mod tests {
         );
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.type:needs_review").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -462,7 +494,7 @@ mod tests {
         );
         let nb = notebook(vec![c1, c2.clone()]);
         let f = Filter::parse("diagnostics.type:ancestor_modified").unwrap();
-        assert!(f.matches(&nb, &c2, 1));
+        assert!(f.matches(&nb, &c2, 1).unwrap());
     }
 
     #[test]
@@ -477,7 +509,7 @@ mod tests {
         );
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.severity:warning").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     // --- FilterKey::DiagnosticsType ---
@@ -487,7 +519,7 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({})); // nb meta but no shas → Missing
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.type:missing").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -495,7 +527,7 @@ mod tests {
         let cell = plain_cell("c1", "x = 1"); // no nb meta → Missing diagnostic
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.type:diff_conflict").unwrap();
-        assert!(!f.matches(&nb, &cell, 0));
+        assert!(!f.matches(&nb, &cell, 0).unwrap());
     }
 
     // --- FilterKey::DiagnosticsSeverity ---
@@ -505,7 +537,7 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({})); // missing → error
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.severity:error").unwrap();
-        assert!(f.matches(&nb, &cell, 0));
+        assert!(f.matches(&nb, &cell, 0).unwrap());
     }
 
     #[test]
@@ -513,7 +545,7 @@ mod tests {
         let cell = cell_with_nb("c1", "x = 1", json!({})); // missing → error, not warning
         let nb = notebook(vec![cell.clone()]);
         let f = Filter::parse("diagnostics.severity:warning").unwrap();
-        assert!(!f.matches(&nb, &cell, 0));
+        assert!(!f.matches(&nb, &cell, 0).unwrap());
     }
 
     // --- OR semantics through Filter::matches ---
@@ -525,8 +557,8 @@ mod tests {
         let c3 = plain_cell("c3", "z = 3");
         let nb = notebook(vec![c1.clone(), c2.clone(), c3.clone()]);
         let f = Filter::parse("cell:c1,c3").unwrap();
-        assert!(f.matches(&nb, &c1, 0));
-        assert!(!f.matches(&nb, &c2, 1));
-        assert!(f.matches(&nb, &c3, 2));
+        assert!(f.matches(&nb, &c1, 0).unwrap());
+        assert!(!f.matches(&nb, &c2, 1).unwrap());
+        assert!(f.matches(&nb, &c3, 2).unwrap());
     }
 }
