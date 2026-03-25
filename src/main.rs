@@ -446,18 +446,18 @@ fn run_view(
         .cells
         .iter()
         .enumerate()
-        .filter_map(|(i, cell)| {
-            // Only consider code cells
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                return None;
-            }
-            if filter::cell_matches_all(&filters, &nb, cell, i) {
+        .filter(|(_, cell)| matches!(cell, nbformat::v4::Cell::Code { .. }))
+        .map(|(i, cell)| -> Result<Option<serde_json::Value>> {
+            if filter::cell_matches_all(&filters, &nb, cell, i)? {
                 let cv = view::CellView::from_cell(&nb, i);
-                Some(cv.to_json_value(&fields))
+                Ok(Some(cv.to_json_value(&fields)))
             } else {
-                None
+                Ok(None)
             }
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     let json = serde_json::to_string_pretty(&results).context("serializing output")?;
@@ -556,17 +556,18 @@ fn run_status(path: PathBuf, stdin: bool, raw_filters: Vec<String>) -> Result<()
         .cells
         .iter()
         .enumerate()
-        .filter_map(|(i, cell)| {
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                return None;
-            }
-            if filter::cell_matches_all(&filters, &nb, cell, i) {
+        .filter(|(_, cell)| matches!(cell, nbformat::v4::Cell::Code { .. }))
+        .map(|(i, cell)| -> Result<Option<serde_json::Value>> {
+            if filter::cell_matches_all(&filters, &nb, cell, i)? {
                 let cv = view::CellView::from_cell(&nb, i);
-                Some(cv.to_json_value(&fields))
+                Ok(Some(cv.to_json_value(&fields)))
             } else {
-                None
+                Ok(None)
             }
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     let json = serde_json::to_string_pretty(&results).context("serializing output")?;
@@ -613,16 +614,17 @@ fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -
         .cells
         .iter()
         .enumerate()
-        .filter_map(|(i, cell)| {
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                return None;
-            }
-            if all || filter::cell_matches_all(&filters, &nb, cell, i) {
-                Some(i)
+        .filter(|(_, cell)| matches!(cell, nbformat::v4::Cell::Code { .. }))
+        .map(|(i, cell)| -> Result<Option<usize>> {
+            if all || filter::cell_matches_all(&filters, &nb, cell, i)? {
+                Ok(Some(i))
             } else {
-                None
+                Ok(None)
             }
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     for idx in indices {
@@ -701,29 +703,29 @@ Match cells by 0-based position in the notebook.
 
   --filter \"index:0\"                   # first cell only
   --filter \"index:2\"                   # third cell
-  --filter \"index:1..3\"                # cells 1 and 2 (exclusive upper bound)
+  --filter \"index:1..3\"                # cells 1, 2, and 3 (inclusive upper bound)
   --filter \"index:2..\"                 # cells 2 onwards
-  --filter \"index:..4\"                 # cells 0 through 3
+  --filter \"index:..4\"                 # cells 0 through 4 (inclusive)
 
 
-### test:<null|not_null>
+### test:<null|not null>
 Match cells based on whether a test is present.
 
-  --filter \"test:not_null\"             # cells that have a test
+  --filter \"test:not null\"             # cells that have a test
   --filter \"test:null\"                 # cells with no test
 
 
-### fixtures:<null|not_null>
+### fixtures:<null|not null>
 Match cells based on whether fixtures are present.
 
-  --filter \"fixtures:not_null\"         # cells that have at least one fixture
+  --filter \"fixtures:not null\"         # cells that have at least one fixture
   --filter \"fixtures:null\"             # cells with no fixtures
 
 
-### diff:<null|not_null>
+### diff:<null|not null>
 Match cells based on whether a diff is present.
 
-  --filter \"diff:not_null\"             # cells that have a diff
+  --filter \"diff:not null\"             # cells that have a diff
   --filter \"diff:null\"                 # cells with no diff
 
 
@@ -765,9 +767,9 @@ Severity levels:
 Multiple --filter flags are ANDed together — a cell must satisfy all of them.
 
   # Invalid cells that have a test defined:
-  --filter \"status.valid:false\" --filter \"test:not_null\"
+  --filter \"status.valid:false\" --filter \"test:not null\"
 
-  # Cells 0 through 4 that have a diff conflict:
+  # Cells 0 through 5 (inclusive) that have a diff conflict:
   --filter \"index:..5\" --filter \"diagnostics.type:diff_conflict\"
 
   # A specific cell by ID:
@@ -786,12 +788,12 @@ Run tests only for cells with a needs_review diagnostic:
   ipso test notebook.ipynb --filter \"diagnostics.type:needs_review\"
 
 View cells that have fixtures but no test:
-  ipso view notebook.ipynb --filter \"fixtures:not_null\" --filter \"test:null\"
+  ipso view notebook.ipynb --filter \"fixtures:not null\" --filter \"test:null\"
 
-View cells 2 through 5 that have any error-severity diagnostic:
-  ipso view notebook.ipynb --filter \"index:2..6\" --filter \"diagnostics.severity:error\"
+View cells 2 through 5 (inclusive) that have any error-severity diagnostic:
+  ipso view notebook.ipynb --filter \"index:2..5\" --filter \"diagnostics.severity:error\"
 
-View the first three cells that have never been accepted:
+View the first four cells (indices 0–3) that have never been accepted:
   ipso view notebook.ipynb --filter \"index:..3\" --filter \"diagnostics.type:missing\"
 
 
@@ -857,18 +859,23 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
         .cells
         .iter()
         .enumerate()
-        .filter_map(|(i, cell)| {
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                return None;
-            }
-            let data = cell.ipso()?;
-            let test = data.test.as_ref()?;
-            if !use_filters || filter::cell_matches_all(&filters, &nb, cell, i) {
-                Some((i, cell.cell_id_str().to_string(), test.name.clone()))
+        .filter(|(_, cell)| matches!(cell, nbformat::v4::Cell::Code { .. }))
+        .map(|(i, cell)| -> Result<Option<(usize, String, String)>> {
+            let Some(data) = cell.ipso() else {
+                return Ok(None);
+            };
+            let Some(test) = data.test.as_ref() else {
+                return Ok(None);
+            };
+            if !use_filters || filter::cell_matches_all(&filters, &nb, cell, i)? {
+                Ok(Some((i, cell.cell_id_str().to_string(), test.name.clone())))
             } else {
-                None
+                Ok(None)
             }
         })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     if targets.is_empty() {
@@ -956,17 +963,18 @@ fn run_playground(
         .cells
         .iter()
         .enumerate()
-        .filter_map(|(i, cell)| {
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                return None;
-            }
-            if filter::cell_matches_all(&filters, &nb, cell, i) {
-                Some((i, cell.cell_id_str().to_string()))
+        .filter(|(_, cell)| matches!(cell, nbformat::v4::Cell::Code { .. }))
+        .map(|(i, cell)| -> Result<Option<(usize, String)>> {
+            if filter::cell_matches_all(&filters, &nb, cell, i)? {
+                Ok(Some((i, cell.cell_id_str().to_string())))
             } else {
-                None
+                Ok(None)
             }
         })
-        .next_back();
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .last();
 
     let (target_idx, target_cell_id) = match target {
         Some(t) => t,
