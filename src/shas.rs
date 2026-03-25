@@ -6,10 +6,6 @@ use std::collections::HashSet;
 use crate::metadata::{IpsoData, ShaEntry};
 use crate::notebook::CellExt;
 
-// ---------------------------------------------------------------------------
-// compute_cell_sha
-// ---------------------------------------------------------------------------
-
 /// SHA1 of `{"ipso": <metadata without "shas">, "source": "..."}`.
 /// `shas` is excluded to avoid a circular dependency.
 pub fn compute_cell_sha(cell: &Cell) -> String {
@@ -48,10 +44,6 @@ pub fn compute_snapshot(nb: &Notebook) -> Vec<ShaEntry> {
         })
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// CellState
-// ---------------------------------------------------------------------------
 
 /// Reasons why a cell's own content is suspect (the cell itself was modified).
 /// Anything derived from the cell's `shas` array that reflects cross-cell
@@ -183,10 +175,6 @@ pub fn cell_state(nb: &Notebook, cell_index: usize) -> CellState {
         CellState::Changed(result)
     }
 }
-
-// ---------------------------------------------------------------------------
-// accept_cell
-// ---------------------------------------------------------------------------
 
 /// Store the SHA snapshot for a cell.
 ///

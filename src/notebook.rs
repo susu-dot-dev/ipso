@@ -6,10 +6,6 @@ use std::path::Path;
 
 use crate::metadata::{read_ipso, IpsoData, IpsoView};
 
-// ---------------------------------------------------------------------------
-// CellExt — helper methods on nbformat Cell
-// ---------------------------------------------------------------------------
-
 pub trait CellExt {
     fn cell_id(&self) -> &CellId;
     fn cell_id_str(&self) -> &str;
@@ -86,10 +82,6 @@ impl CellExt for Cell {
     }
 }
 
-// ---------------------------------------------------------------------------
-// load_notebook / save_notebook
-// ---------------------------------------------------------------------------
-
 /// Parse a notebook from an already-loaded string.  Used for `--stdin` mode.
 ///
 /// Only nbformat 4.5 notebooks are accepted.  Older notebooks must be
@@ -153,9 +145,15 @@ fn strip_null_language_info_fields(json: &str) -> Result<String> {
     serde_json::to_string_pretty(&value).context("re-serializing notebook JSON")
 }
 
-// ---------------------------------------------------------------------------
-// Helper: blank CellMetadata
-// ---------------------------------------------------------------------------
+/// Find the first code cell with the given `cell_id`, returning its index
+/// and a reference to the cell.  Returns `None` if no code cell with that ID
+/// exists.
+pub fn find_code_cell<'a>(nb: &'a Notebook, cell_id: &str) -> Option<(usize, &'a Cell)> {
+    nb.cells
+        .iter()
+        .enumerate()
+        .find(|(_, cell)| matches!(cell, Cell::Code { .. }) && cell.cell_id_str() == cell_id)
+}
 
 pub fn blank_cell_metadata() -> CellMetadata {
     CellMetadata {
@@ -172,10 +170,6 @@ pub fn blank_cell_metadata() -> CellMetadata {
         additional: HashMap::new(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// clear_editor_meta helper
-// ---------------------------------------------------------------------------
 
 pub fn clear_editor_meta(cell: &mut Cell) {
     cell.ipso_mut().remove_field("editor");

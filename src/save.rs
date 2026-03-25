@@ -8,10 +8,6 @@ use crate::metadata::{Fixture, ShaEntry, TestMeta};
 use crate::notebook::{clear_editor_meta, CellExt};
 use crate::shas::{compute_cell_sha, compute_snapshot};
 
-// ---------------------------------------------------------------------------
-// Section — parsed from the editor notebook
-// ---------------------------------------------------------------------------
-
 struct Section {
     cell_id: String,
     fixtures: Vec<(String, Fixture)>,
@@ -20,10 +16,6 @@ struct Section {
     test_name: Option<String>,
     test_source: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// Conflict detection
-// ---------------------------------------------------------------------------
 
 /// Read the stored `source_shas` from the editor notebook's notebook-level
 /// metadata and compare against the current state of the source notebook.
@@ -121,10 +113,6 @@ pub fn check_conflicts(source: &Notebook, editor: &Notebook) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
 /// Apply the changes from `editor` back onto `source` (in-place).
 ///
 /// For every section successfully applied, the SHA snapshot is stamped on the
@@ -215,10 +203,6 @@ pub fn apply_editor_to_source(source: &mut Notebook, editor: &Notebook) -> Resul
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Section parser
-// ---------------------------------------------------------------------------
-
 fn parse_sections(editor: &Notebook) -> Result<Vec<Section>> {
     let mut sections: Vec<Section> = Vec::new();
     let mut current: Option<SectionBuilder> = None;
@@ -293,10 +277,6 @@ fn parse_sections(editor: &Notebook) -> Result<Vec<Section>> {
 
     Ok(sections)
 }
-
-// ---------------------------------------------------------------------------
-// SectionBuilder
-// ---------------------------------------------------------------------------
 
 struct SectionBuilder {
     cell_id: String,
@@ -376,10 +356,6 @@ impl SectionBuilder {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Fixture cell parser
-// ---------------------------------------------------------------------------
 
 fn parse_fixture_cell(cell: &Cell, parent_cell_id: &str, position: usize) -> (String, Fixture) {
     let src = cell.source_str();

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use anyhow::Context;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
@@ -14,11 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{self, CellStatus, DiagnosticType};
 use crate::diff_utils;
-use crate::notebook::{load_notebook, CellExt};
-
-// ---------------------------------------------------------------------------
-// Tool parameters
-// ---------------------------------------------------------------------------
+use crate::notebook::{find_code_cell, load_notebook, CellExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepairIpsoParams {
@@ -43,9 +40,14 @@ pub struct GenerateDiffParams {
     pub patched_source: String,
 }
 
-// ---------------------------------------------------------------------------
-// MCP server
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExecuteCellParams {
+    /// Path to the .ipynb notebook file.
+    pub notebook_path: String,
+    /// ID of the cell to execute. All preceding cells (with their fixtures and
+    /// diffs applied) are executed first to establish the correct state.
+    pub cell_id: String,
+}
 
 #[derive(Clone)]
 pub struct IpsoMcp {
@@ -96,6 +98,31 @@ impl IpsoMcp {
             Err(e) => Err(McpError::internal_error(format!("{:#}", e), None)),
         }
     }
+
+    #[tool(
+        description = "Execute a notebook cell inside its ipso fixture environment and return \
+        the stdout. Each cell runs with its fixtures providing controlled, lightweight mock \
+        data instead of real external resources, so execution is fast, safe to repeat, and \
+        free of side effects on real systems. All preceding cells are also executed with their \
+        fixtures, establishing the correct variable state before the target cell runs. \
+        Use this whenever you want to observe what a cell actually produces — to verify \
+        behaviour, inspect intermediate values, or confirm that a change has the expected \
+        effect — without having to write or modify a test first."
+    )]
+    async fn execute_cell(
+        &self,
+        Parameters(params): Parameters<ExecuteCellParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = tokio::task::spawn_blocking(move || do_execute_cell(&params)).await;
+        match result {
+            Ok(Ok(text)) => Ok(CallToolResult::success(vec![Content::text(text)])),
+            Ok(Err(e)) => Err(McpError::internal_error(format!("{:#}", e), None)),
+            Err(e) => Err(McpError::internal_error(
+                format!("task panicked: {e}"),
+                None,
+            )),
+        }
+    }
 }
 
 #[tool_handler]
@@ -114,18 +141,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Core logic
-// ---------------------------------------------------------------------------
-
 fn do_generate_diff(params: &GenerateDiffParams) -> anyhow::Result<String> {
     let path = Path::new(&params.notebook_path);
     let nb = load_notebook(path)?;
 
-    let cell = nb
-        .cells
-        .iter()
-        .find(|c| matches!(c, nbformat::v4::Cell::Code { .. }) && c.cell_id_str() == params.cell_id)
+    let cell = find_code_cell(&nb, &params.cell_id)
+        .map(|(_, c)| c)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Code cell `{}` not found in `{}`",
@@ -175,24 +196,21 @@ async fn do_repair(params: &RepairIpsoParams) -> anyhow::Result<String> {
 
     // Pick the target cell.
     let target = if let Some(ref target_id) = params.cell_id {
-        let mut found = None;
-        for (idx, cell) in nb.cells.iter().enumerate() {
-            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
-                continue;
-            }
-            if cell.cell_id_str() == target_id {
-                let status = diagnostics::compute_cell_diagnostics(&nb, idx);
-                if status.valid {
-                    return Ok(format!(
-                        "Cell `{}` in `{}` is already valid. Nothing to repair.",
-                        target_id, params.notebook_path
-                    ));
-                }
-                found = Some((idx, cell, status));
-                break;
-            }
+        let (idx, cell) = find_code_cell(&nb, target_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Code cell `{}` not found in `{}`",
+                target_id,
+                params.notebook_path
+            )
+        })?;
+        let status = diagnostics::compute_cell_diagnostics(&nb, idx);
+        if status.valid {
+            return Ok(format!(
+                "Cell `{}` in `{}` is already valid. Nothing to repair.",
+                target_id, params.notebook_path
+            ));
         }
-        found.ok_or_else(|| {
+        Some((idx, cell, status)).ok_or_else(|| {
             anyhow::anyhow!(
                 "Cell `{}` not found in `{}`",
                 target_id,
@@ -337,9 +355,55 @@ async fn do_repair(params: &RepairIpsoParams) -> anyhow::Result<String> {
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
-// Test runner (calls test_runner directly)
-// ---------------------------------------------------------------------------
+fn do_execute_cell(params: &ExecuteCellParams) -> anyhow::Result<String> {
+    use std::io::Write;
+
+    let path = Path::new(&params.notebook_path);
+    let nb = load_notebook(path)
+        .with_context(|| format!("loading notebook `{}`", params.notebook_path))?;
+
+    let (target_idx, _) = find_code_cell(&nb, &params.cell_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "code cell `{}` not found in `{}`",
+            params.cell_id,
+            params.notebook_path
+        )
+    })?;
+
+    let script = crate::test_runner::build_playground_script(
+        &nb,
+        target_idx,
+        false, // non-interactive
+        &params.notebook_path,
+        &params.cell_id,
+    )
+    .with_context(|| format!("building playground context for cell `{}`", params.cell_id))?;
+
+    let mut tmp = tempfile::NamedTempFile::new().context("creating temporary launcher script")?;
+    tmp.write_all(script.as_bytes())
+        .context("writing launcher script")?;
+    let tmp_path = tmp.into_temp_path();
+
+    let output = std::process::Command::new("python")
+        .arg(tmp_path.as_os_str())
+        .output()
+        .context("spawning Python interpreter")?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if !stderr.is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.is_empty() {
+            stdout.trim().to_string()
+        } else {
+            format!("Python exited with status {}", output.status)
+        };
+        Err(anyhow::anyhow!(detail))
+    }
+}
 
 async fn run_test(
     nb: &nbformat::v4::Notebook,
@@ -415,10 +479,6 @@ fn format_test_result(result: &crate::test_runner::CellTestResult) -> String {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Response building helpers
-// ---------------------------------------------------------------------------
 
 fn append_existing_metadata(out: &mut String, data: &crate::metadata::IpsoData) {
     // Fixtures.
@@ -504,10 +564,6 @@ fn append_diagnostic_section(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Diagnostic-specific sections
-// ---------------------------------------------------------------------------
 
 fn append_missing(
     out: &mut String,
@@ -861,10 +917,6 @@ fn append_invalid_field(
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// CLI command templates
-// ---------------------------------------------------------------------------
 
 fn append_update_command_template(out: &mut String, notebook_path: &str, cell_id: &str) {
     out.push_str(&format!(

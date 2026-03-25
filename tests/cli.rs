@@ -6,10 +6,6 @@ use std::process::Stdio;
 
 use tempfile::TempDir;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Copy a fixture notebook into a temp directory and return both.
 fn setup_fixture(name: &str) -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().expect("create tempdir");
@@ -170,10 +166,6 @@ fn has_editor_metadata(nb: &serde_json::Value) -> bool {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// Full smoke test:
 ///   1. Run `ipso edit` on simple.ipynb — exits immediately.
 ///   2. Copy the editor notebook so we can execute it.
@@ -333,10 +325,6 @@ fn edit_continue_fails_if_no_editor_file() {
         "expected non-zero exit from --continue when no editor file exists"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Round-trip and simulation tests
-// ---------------------------------------------------------------------------
 
 /// Helper: extract the `ipso` metadata object from a cell identified by
 /// its `id` field. Returns `serde_json::Value::Null` if not found.
@@ -872,10 +860,6 @@ fn edit_continue_does_not_stamp_shas_on_plain_cells() {
     );
 }
 
-// ===========================================================================
-// nb view tests
-// ===========================================================================
-
 /// Run `ipso view <args>` and return (stdout, stderr, exit status).
 fn run_view(source_path: &Path, extra_args: &[&str]) -> (String, String, std::process::ExitStatus) {
     let mut cmd = std::process::Command::new(common::binary());
@@ -1123,10 +1107,6 @@ fn view_no_filters_returns_empty_array_for_no_code_cells() {
     assert_eq!(arr.len(), 0);
 }
 
-// ===========================================================================
-// nb scaffold tests
-// ===========================================================================
-
 /// Run `ipso scaffold <args>` and return (stdout, stderr, exit status).
 fn run_scaffold(args: &[&str]) -> (String, String, std::process::ExitStatus) {
     let mut cmd = std::process::Command::new(common::binary());
@@ -1204,10 +1184,6 @@ fn scaffold_test_minimal_uses_defaults() {
     assert_eq!(val["test"]["source"].as_str(), Some(""));
 }
 
-// ===========================================================================
-// nb status tests
-// ===========================================================================
-
 /// Run `ipso status <args>` and return (stdout, stderr, exit status).
 fn run_status(
     source_path: &Path,
@@ -1283,10 +1259,6 @@ fn status_with_filter_narrows_cells() {
         assert_eq!(cell["cell_id"].as_str(), Some("compute-total"));
     }
 }
-
-// ===========================================================================
-// nb accept tests
-// ===========================================================================
 
 /// Run `ipso accept <args>` and return (stdout, stderr, exit status).
 fn run_accept(
@@ -1388,10 +1360,6 @@ fn accept_with_filter_only_accepts_matching_cells() {
     assert_eq!(arr2.len(), 1);
     assert_eq!(arr2[0]["status"]["valid"], false);
 }
-
-// ===========================================================================
-// nb update tests
-// ===========================================================================
 
 /// Run `ipso update <args>` and return (stdout, stderr, exit status).
 fn run_update(
@@ -1623,10 +1591,6 @@ fn update_data_file_works() {
     let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
     assert_eq!(arr[0]["diff"].as_str(), Some("a diff string"));
 }
-
-// ===========================================================================
-// Additional integration tests — coverage gaps
-// ===========================================================================
 
 // --- update: --stdin mode ---
 
@@ -2077,14 +2041,6 @@ fn update_validation_failure_stdout_empty() {
     );
 }
 
-// ===========================================================================
-// ipso test
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Run `ipso test <path> [args...]` using the test venv Python.
 /// Returns (stdout, stderr, exit_status).
 fn run_ipso_test(
@@ -2111,10 +2067,6 @@ fn parse_test_results(stdout: &str) -> Vec<serde_json::Value> {
     serde_json::from_str(stdout)
         .unwrap_or_else(|e| panic!("failed to parse test results JSON: {e}\nstdout: {stdout}"))
 }
-
-// ---------------------------------------------------------------------------
-// Success cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_pass_exits_zero() {
@@ -2181,10 +2133,6 @@ fn test_pass_with_diff_applied() {
     assert_eq!(results[0]["subtests"][0]["passed"].as_bool(), Some(true));
 }
 
-// ---------------------------------------------------------------------------
-// Test failure cases (exit 1)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_fail_assertion_exits_one() {
     let nb = common::fixtures_dir().join("test-fail-assertion.ipynb");
@@ -2246,10 +2194,6 @@ fn test_fail_assertion_error_and_traceback_present() {
         "traceback should be sanitized (no ESC): {tb:?}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Subtest cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_subtests_partial_fail_exits_one() {
@@ -2317,10 +2261,6 @@ fn test_subtests_names_preserved() {
     assert_eq!(subtests[0]["name"].as_str(), Some("correct result"));
     assert_eq!(subtests[1]["name"].as_str(), Some("wrong assertion"));
 }
-
-// ---------------------------------------------------------------------------
-// Infrastructure failure cases (exit 2)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_fixture_error_exits_two() {
@@ -2414,10 +2354,6 @@ fn test_source_cell_error_detail_contains_exception() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Parallel execution
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_parallel_all_cells_run() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
@@ -2455,10 +2391,6 @@ fn test_parallel_both_pass() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Filter
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_filter_selects_single_cell() {
     let nb = common::fixtures_dir().join("test-multi-cell.ipynb");
@@ -2487,10 +2419,6 @@ fn test_no_matching_filter_returns_empty_array() {
     assert!(results.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// CLI argument validation
-// ---------------------------------------------------------------------------
-
 #[test]
 fn test_no_filter_runs_all_cells() {
     let nb = common::fixtures_dir().join("test-pass.ipynb");
@@ -2503,10 +2431,6 @@ fn test_no_filter_runs_all_cells() {
         .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
     assert!(parsed.as_array().is_some_and(|a| !a.is_empty()));
 }
-
-// ---------------------------------------------------------------------------
-// Output schema
-// ---------------------------------------------------------------------------
 
 #[test]
 fn test_output_is_valid_json_array() {
@@ -2551,10 +2475,6 @@ fn test_error_result_schema() {
     assert!(err.get("phase").is_some(), "error missing phase");
     assert!(err.get("detail").is_some(), "error missing detail");
 }
-
-// ---------------------------------------------------------------------------
-// ipso upgrade
-// ---------------------------------------------------------------------------
 
 fn run_upgrade(
     source_path: &Path,

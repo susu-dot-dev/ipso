@@ -3,10 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Leaf types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ShaEntry {
     pub cell_id: String,
@@ -28,10 +24,6 @@ pub struct TestMeta {
     pub source: String,
 }
 
-// ---------------------------------------------------------------------------
-// IpsoData  (owned snapshot, read-only)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IpsoData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,10 +42,6 @@ pub struct IpsoData {
     #[serde(flatten)]
     pub extra: IndexMap<String, Value>,
 }
-
-// ---------------------------------------------------------------------------
-// IpsoView  (mutable borrow for writing)
-// ---------------------------------------------------------------------------
 
 pub struct IpsoView<'a> {
     additional: &'a mut HashMap<String, Value>,
@@ -140,10 +128,6 @@ impl<'a> IpsoView<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Read ipso meta from raw additional map
-// ---------------------------------------------------------------------------
-
 pub fn read_ipso(additional: &HashMap<String, Value>) -> Option<IpsoData> {
     match additional.get("ipso") {
         None => None,
@@ -153,10 +137,6 @@ pub fn read_ipso(additional: &HashMap<String, Value>) -> Option<IpsoData> {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serde helpers
-// ---------------------------------------------------------------------------
 
 mod source_lines {
     use serde::{Deserializer, Serialize as _, Serializer};

@@ -9,10 +9,6 @@ use nbformat::v4::{Cell, Notebook};
 use crate::diagnostics::compute_cell_diagnostics;
 use crate::notebook::CellExt;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// A single parsed `--filter "key:expr"` argument.
 #[derive(Debug, Clone)]
 pub struct Filter {
@@ -48,10 +44,6 @@ impl Filter {
 pub fn cell_matches_all(filters: &[Filter], nb: &Notebook, cell: &Cell, index: usize) -> bool {
     filters.iter().all(|f| f.matches(nb, cell, index))
 }
-
-// ---------------------------------------------------------------------------
-// Filter keys
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 enum FilterKey {
@@ -146,10 +138,6 @@ impl FilterKey {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Match `"null"` / `"not null"` against a has-value boolean.
 fn match_null_or_not(has_value: bool, expr: &str) -> bool {
     match expr {
@@ -181,10 +169,6 @@ fn match_index(index: usize, expr: &str) -> bool {
     }
     false
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

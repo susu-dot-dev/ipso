@@ -8,10 +8,6 @@ use crate::edit::split_source;
 use crate::metadata::Fixture;
 use crate::notebook::{blank_cell_metadata, new_cell_id, CellExt};
 
-// ---------------------------------------------------------------------------
-// Public output types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CellTestResult {
@@ -57,10 +53,6 @@ pub struct TestError {
     pub detail: String,
     pub traceback: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// Build test notebook
-// ---------------------------------------------------------------------------
 
 /// Generate a self-contained test notebook for the cell at `target_idx`.
 ///
@@ -136,10 +128,6 @@ pub fn build_test_notebook(source: &Notebook, target_idx: usize) -> Result<Noteb
         cells,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Cell constructors
-// ---------------------------------------------------------------------------
 
 fn make_setup_cell() -> Cell {
     let mut meta = blank_cell_metadata();
@@ -246,10 +234,6 @@ fn make_teardown_cell() -> Cell {
         outputs: vec![],
     }
 }
-
-// ---------------------------------------------------------------------------
-// Result extraction
-// ---------------------------------------------------------------------------
 
 const RESULTS_MARKER: &str = "__IPSO_RESULTS__";
 
@@ -565,10 +549,6 @@ pub fn executor_error_result(cell_id: &str, test_name: &str, detail: &str) -> Ce
     }
 }
 
-// ---------------------------------------------------------------------------
-// Executor subprocess
-// ---------------------------------------------------------------------------
-
 /// Spawn the Python executor subprocess, pipe `test_nb_json` to its stdin,
 /// and return the parsed test result.  This is a synchronous blocking call;
 /// wrap it in `tokio::task::spawn_blocking` when calling from async contexts.
@@ -648,9 +628,141 @@ pub fn run_executor_subprocess(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Build the complete Python launcher script for the playground.
+///
+/// Combines [`build_playground_cells`] with script generation.  Pass
+/// `interactive = true` to append a `code.interact()` call (drops the user
+/// into a REPL); `false` runs the cells and exits, streaming stdout to the
+/// caller.
+pub fn build_playground_script(
+    source: &Notebook,
+    target_idx: usize,
+    interactive: bool,
+    notebook_path: &str,
+    target_cell_id: &str,
+) -> Result<String> {
+    let cells = build_playground_cells(source, target_idx)?;
+    Ok(render_launcher_script(
+        &cells,
+        interactive,
+        notebook_path,
+        target_cell_id,
+    ))
+}
+
+fn render_launcher_script(
+    cells: &[PlaygroundCell],
+    interactive: bool,
+    notebook_path: &str,
+    target_cell_id: &str,
+) -> String {
+    let mut s = String::new();
+
+    if interactive {
+        s.push_str("import code as _ipso_code\n");
+    }
+    s.push_str("_ipso_ns = {}\n");
+
+    for cell in cells {
+        s.push('\n');
+        match &cell.role {
+            PlaygroundCellRole::Fixture { name } => {
+                s.push_str(&format!("# Fixture: {} / {}\n", cell.cell_id, name));
+            }
+            PlaygroundCellRole::CellSource => {
+                s.push_str(&format!("# Cell: {}\n", cell.cell_id));
+            }
+        }
+        // JSON encoding produces a valid Python string literal.
+        let encoded = serde_json::to_string(&cell.source).unwrap_or_else(|_| "\"\"".to_string());
+        s.push_str(&format!("exec({encoded}, _ipso_ns)\n"));
+    }
+
+    if interactive {
+        let nb_display =
+            serde_json::to_string(notebook_path).unwrap_or_else(|_| "\"?\"".to_string());
+        let cell_display =
+            serde_json::to_string(target_cell_id).unwrap_or_else(|_| "\"?\"".to_string());
+        s.push_str(&format!(
+            "\n_ipso_code.interact(\n\
+             \x20   local=_ipso_ns,\n\
+             \x20   banner=\"ipso playground — \" + {nb_display} + \" (up to cell \" + {cell_display} + \")\\n\",\n\
+             \x20   exitmsg=\"\",\n\
+             )\n"
+        ));
+    }
+
+    s
+}
+
+/// The role of a cell in the playground execution context.
+#[derive(Debug)]
+pub enum PlaygroundCellRole {
+    Fixture { name: String },
+    CellSource,
+}
+
+/// A single unit of code to run in the playground, in order.
+#[derive(Debug)]
+pub struct PlaygroundCell {
+    pub cell_id: String,
+    pub role: PlaygroundCellRole,
+    pub source: String,
+}
+
+/// Collect the ordered list of code units needed to reproduce the execution
+/// context up to `target_idx`, for use by `ipso playground`.
+///
+/// Mirrors the loop in `build_test_notebook` but returns flat data instead of
+/// a Notebook.  Unlike `build_test_notebook`, this function returns `Err` if
+/// a diff fails to apply — it never silently falls back to the raw source.
+pub fn build_playground_cells(source: &Notebook, target_idx: usize) -> Result<Vec<PlaygroundCell>> {
+    let mut cells: Vec<PlaygroundCell> = Vec::new();
+
+    for (idx, cell) in source.cells.iter().enumerate() {
+        let cell = match cell {
+            Cell::Code { .. } => cell,
+            _ => continue,
+        };
+
+        if idx > target_idx {
+            break;
+        }
+
+        let cell_id = cell.cell_id_str().to_string();
+        let ipso_meta = cell.ipso();
+
+        // Fixtures
+        if let Some(ref data) = ipso_meta {
+            if let Some(fixtures) = &data.fixtures {
+                let mut sorted: Vec<(&String, &Fixture)> = fixtures.iter().collect();
+                sorted.sort_by_key(|(_, f)| f.priority);
+                for (name, fixture) in sorted {
+                    cells.push(PlaygroundCell {
+                        cell_id: cell_id.clone(),
+                        role: PlaygroundCellRole::Fixture { name: name.clone() },
+                        source: fixture.source.clone(),
+                    });
+                }
+            }
+        }
+
+        // Patched source — error if diff fails (no silent fallback)
+        let patched_source = match ipso_meta.as_ref().and_then(|d| d.diff.as_deref()) {
+            Some(diff) => apply_diff(&cell.source_str(), diff)
+                .with_context(|| format!("applying diff for cell `{cell_id}`"))?,
+            None => cell.source_str(),
+        };
+
+        cells.push(PlaygroundCell {
+            cell_id: cell_id.clone(),
+            role: PlaygroundCellRole::CellSource,
+            source: patched_source,
+        });
+    }
+
+    Ok(cells)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1383,5 +1495,142 @@ mod tests {
             }
             CellTestResult::Completed { .. } => panic!("expected Error"),
         }
+    }
+}
+
+#[cfg(test)]
+mod playground_tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Run `source` as a non-interactive playground cell and return its stdout.
+    fn run_source(source: &str) -> String {
+        let cells = vec![PlaygroundCell {
+            cell_id: "c1".to_string(),
+            role: PlaygroundCellRole::CellSource,
+            source: source.to_string(),
+        }];
+        let script = render_launcher_script(&cells, false, "test.ipynb", "c1");
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(script.as_bytes()).unwrap();
+        let tmp_path = tmp.into_temp_path();
+
+        let output = std::process::Command::new("python")
+            .arg(tmp_path.as_os_str())
+            .output()
+            .expect("python must be available");
+
+        assert!(
+            output.status.success(),
+            "script failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    #[test]
+    fn plain_print() {
+        assert_eq!(run_source("print('hello')"), "hello\n");
+    }
+
+    #[test]
+    fn source_with_double_quotes() {
+        assert_eq!(run_source(r#"print("hello")"#), "hello\n");
+    }
+
+    #[test]
+    fn source_with_backslash() {
+        // The source itself contains a backslash literal.
+        assert_eq!(run_source(r#"print("\\")"#), "\\\n");
+    }
+
+    #[test]
+    fn source_with_embedded_newline_in_string() {
+        // A string literal in the source that contains \n — the newline is
+        // part of the Python value, not the source structure.
+        assert_eq!(run_source(r#"print("a\nb")"#), "a\nb\n");
+    }
+
+    #[test]
+    fn multiline_source() {
+        // Source spans multiple lines (actual newlines in the source string).
+        assert_eq!(run_source("x = 1\ny = 2\nprint(x + y)"), "3\n");
+    }
+
+    #[test]
+    fn source_with_single_quotes() {
+        assert_eq!(run_source("print('it\\'s fine')"), "it's fine\n");
+    }
+
+    #[test]
+    fn source_with_unicode() {
+        assert_eq!(run_source("print('héllo wörld')"), "héllo wörld\n");
+    }
+
+    #[test]
+    fn source_with_triple_quotes() {
+        assert_eq!(run_source(r#"print("""triple""")"#), "triple\n");
+    }
+
+    #[test]
+    fn variables_shared_across_cells() {
+        // Variables set in earlier cells are visible in later ones.
+        let cells = vec![
+            PlaygroundCell {
+                cell_id: "c1".to_string(),
+                role: PlaygroundCellRole::CellSource,
+                source: "x = 42".to_string(),
+            },
+            PlaygroundCell {
+                cell_id: "c2".to_string(),
+                role: PlaygroundCellRole::CellSource,
+                source: "print(x)".to_string(),
+            },
+        ];
+        let script = render_launcher_script(&cells, false, "test.ipynb", "c2");
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(script.as_bytes()).unwrap();
+        let tmp_path = tmp.into_temp_path();
+
+        let output = std::process::Command::new("python")
+            .arg(tmp_path.as_os_str())
+            .output()
+            .expect("python must be available");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+    }
+
+    #[test]
+    fn fixture_runs_before_cell() {
+        let cells = vec![
+            PlaygroundCell {
+                cell_id: "c1".to_string(),
+                role: PlaygroundCellRole::Fixture {
+                    name: "setup".to_string(),
+                },
+                source: "x = 10".to_string(),
+            },
+            PlaygroundCell {
+                cell_id: "c1".to_string(),
+                role: PlaygroundCellRole::CellSource,
+                source: "print(x * 2)".to_string(),
+            },
+        ];
+        let script = render_launcher_script(&cells, false, "test.ipynb", "c1");
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(script.as_bytes()).unwrap();
+        let tmp_path = tmp.into_temp_path();
+
+        let output = std::process::Command::new("python")
+            .arg(tmp_path.as_os_str())
+            .output()
+            .expect("python must be available");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "20\n");
     }
 }

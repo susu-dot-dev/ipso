@@ -5,11 +5,7 @@ use serde_json::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticType, Severity};
 use crate::metadata::{Fixture, TestMeta};
-use crate::notebook::CellExt;
-
-// ---------------------------------------------------------------------------
-// Input types
-// ---------------------------------------------------------------------------
+use crate::notebook::{find_code_cell, CellExt};
 
 /// Represents a field that distinguishes absent vs null vs value.
 #[derive(Debug)]
@@ -61,10 +57,6 @@ impl CellUpdate {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------------
-
 /// Parse a JSON string into a vec of CellUpdate. Accepts a single object or array.
 pub fn parse_updates(json_str: &str) -> Result<Vec<CellUpdate>> {
     let value: Value = serde_json::from_str(json_str).context("parsing update JSON")?;
@@ -75,19 +67,13 @@ pub fn parse_updates(json_str: &str) -> Result<Vec<CellUpdate>> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
-
 /// Validate all updates against a notebook. Returns diagnostics for any errors.
 pub fn validate_updates(updates: &[CellUpdate], nb: &Notebook) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     for update in updates {
         // Check cell_id exists
-        let cell_exists = nb.cells.iter().any(|c| {
-            matches!(c, nbformat::v4::Cell::Code { .. }) && c.cell_id_str() == update.cell_id
-        });
+        let cell_exists = find_code_cell(nb, &update.cell_id).is_some();
         if !cell_exists {
             diagnostics.push(Diagnostic {
                 r#type: DiagnosticType::InvalidField,
@@ -242,20 +228,13 @@ fn validate_fixture(key: &str, val: &Value, diagnostics: &mut Vec<Diagnostic>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Apply
-// ---------------------------------------------------------------------------
-
 /// Apply validated updates to the notebook.
 pub fn apply_updates(updates: Vec<CellUpdate>, nb: &mut Notebook) -> Result<()> {
     for update in updates {
-        let cell = nb
-            .cells
-            .iter_mut()
-            .find(|c| {
-                matches!(c, nbformat::v4::Cell::Code { .. }) && c.cell_id_str() == update.cell_id
-            })
+        let idx = find_code_cell(nb, &update.cell_id)
+            .map(|(i, _)| i)
             .expect("cell existence was validated");
+        let cell = &mut nb.cells[idx];
 
         // Apply fixtures
         match update.fixtures {

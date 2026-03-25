@@ -154,6 +154,37 @@ enum Command {
         /// Topic to display documentation for (e.g. "filters").
         topic: Option<String>,
     },
+    /// Run notebook cells in an interactive Python REPL (or non-interactively).
+    ///
+    /// Executes all code cells up to and including the target cell (with
+    /// fixtures and diffs applied), then drops you into a Python REPL so you
+    /// can inspect and experiment with the established state.
+    ///
+    /// The target cell is the last code cell that matches all supplied
+    /// --filter flags.  If no --filter is given, the last code cell is used.
+    ///
+    /// Mode selection (when neither flag is given, stdin TTY is detected):
+    ///   --interactive      Force REPL even when stdin is not a TTY
+    ///   --non-interactive  Run cells and stream stdout; no REPL
+    Playground {
+        /// Path to the source .ipynb file.
+        path: PathBuf,
+        /// Filter which cell to target (same syntax as view/accept/test).
+        /// The last matching code cell is used as the target.
+        /// If omitted, the last code cell in the notebook is used.
+        /// Run `ipso docs filters` for full filter syntax and examples.
+        #[arg(long = "filter", verbatim_doc_comment)]
+        filters: Vec<String>,
+        /// Python binary to use (default: "python" from PATH).
+        #[arg(long, default_value = "python")]
+        python: String,
+        /// Force interactive REPL mode even when stdin is not a TTY.
+        #[arg(long, conflicts_with = "non_interactive")]
+        interactive: bool,
+        /// Force non-interactive mode even when stdin is a TTY.
+        #[arg(long, conflicts_with = "interactive")]
+        non_interactive: bool,
+    },
     /// Upgrade a notebook to nbformat 4.5 by assigning stable cell IDs.
     ///
     /// Writes the upgraded notebook in-place.  With --stdin, reads from stdin
@@ -261,6 +292,13 @@ fn main() -> Result<()> {
             stdin,
             dry_run,
         }) => run_upgrade(path, stdin, dry_run),
+        Some(Command::Playground {
+            path,
+            filters,
+            python,
+            interactive,
+            non_interactive,
+        }) => run_playground(path, filters, python, interactive, non_interactive),
     }
 }
 /// Derive the editor notebook path from the source path.
@@ -604,10 +642,6 @@ fn run_accept(path: PathBuf, stdin: bool, all: bool, raw_filters: Vec<String>) -
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
-
 fn run_docs(topic: Option<String>) -> Result<()> {
     match topic.as_deref() {
         None => {
@@ -898,9 +932,91 @@ fn run_test(path: PathBuf, raw_filters: Vec<String>, python: String, timeout: u6
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// ipso upgrade
-// ---------------------------------------------------------------------------
+/// `ipso playground <path>`: run patched cells then drop into a Python REPL.
+fn run_playground(
+    path: PathBuf,
+    raw_filters: Vec<String>,
+    python: String,
+    force_interactive: bool,
+    force_non_interactive: bool,
+) -> Result<()> {
+    use std::io::IsTerminal;
+    use std::io::Write;
+
+    let nb =
+        load_notebook(&path).with_context(|| format!("loading notebook {}", path.display()))?;
+
+    let filters: Vec<filter::Filter> = raw_filters
+        .iter()
+        .map(|s| filter::Filter::parse(s))
+        .collect::<Result<_>>()?;
+
+    // Find the target cell: last code cell matching all filters.
+    let target = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            if !matches!(cell, nbformat::v4::Cell::Code { .. }) {
+                return None;
+            }
+            if filter::cell_matches_all(&filters, &nb, cell, i) {
+                Some((i, cell.cell_id_str().to_string()))
+            } else {
+                None
+            }
+        })
+        .next_back();
+
+    let (target_idx, target_cell_id) = match target {
+        Some(t) => t,
+        None => {
+            if filters.is_empty() {
+                bail!("notebook `{}` has no code cells", path.display());
+            } else {
+                bail!(
+                    "no code cell in `{}` matches the supplied filters",
+                    path.display()
+                );
+            }
+        }
+    };
+
+    // Collect patched cells and generate the launcher script — errors on any bad diff.
+    let interactive = if force_interactive {
+        true
+    } else if force_non_interactive {
+        false
+    } else {
+        std::io::stdin().is_terminal()
+    };
+
+    let notebook_path_str = path.display().to_string();
+    let script = test_runner::build_playground_script(
+        &nb,
+        target_idx,
+        interactive,
+        &notebook_path_str,
+        &target_cell_id,
+    )
+    .with_context(|| format!("building playground context for cell `{target_cell_id}`"))?;
+
+    // Write to a temp file.
+    let mut tmp = tempfile::NamedTempFile::new().context("creating temporary launcher script")?;
+    tmp.write_all(script.as_bytes())
+        .context("writing launcher script")?;
+    // Keep the file alive until the subprocess exits.
+    let tmp_path = tmp.into_temp_path();
+
+    // Spawn Python with inherited stdio so the REPL (or cell output) connects
+    // directly to the terminal / caller's stdout.
+    let status = std::process::Command::new(&python)
+        .arg(tmp_path.as_os_str())
+        .status()
+        .with_context(|| format!("spawning Python interpreter `{python}`"))?;
+
+    std::process::exit(status.code().unwrap_or(1));
+}
 
 fn run_upgrade(path: PathBuf, stdin: bool, dry_run: bool) -> Result<()> {
     use std::collections::HashSet;
