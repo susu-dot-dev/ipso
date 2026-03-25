@@ -1,6 +1,6 @@
 [project]
 name = "ipso"
-version = "0.1.4"
+version = "0.1.5"
 description = "Notebook testing with fixtures, patches, and AI-generated tests"
 readme = "README.md"
 license = { text = "MIT" }
